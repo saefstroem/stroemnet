@@ -5,3 +5,4 @@
 stroemnet.toml
 /target
 contracts/ethereum/deploy.sh
+todo.md
