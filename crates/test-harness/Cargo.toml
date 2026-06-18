@@ -1,0 +1,15 @@
+[package]
+name = "stroemnet-test-harness"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+stroemnet-amounts = { path = "../amounts" }
+stroemnet-handler = { path = "../handler" }
+stroemnet-p2p = { path = "../p2p", features = ["test-helpers"] }
+stroemnet-protocol = { path = "../protocol" }
+ahash = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+
+[dev-dependencies]

@@ -1,0 +1,58 @@
+[package]
+name = "stroemnet-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "stroemnetd"
+path = "src/bin/stroemnetd.rs"
+
+[dependencies]
+stroemnet-amounts = { path = "../amounts" }
+stroemnet-data = { path = "../data" }
+stroemnet-handler = { path = "../handler" }
+stroemnet-p2p = { path = "../p2p" }
+stroemnet-protocol = { path = "../protocol" }
+ahash = { workspace = true }
+futures = { workspace = true }
+hex = { workspace = true }
+rand = "0.10.1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+# Native-only deps. ETH client + LP-side Kaspa daemon stack pull tokio "full",
+# alloy native transports, kaspa-wrpc-client (rustls). WASM nodes embed the
+# P2P + Handler + SwapTracker plus chain-kaspa's cross-platform `client`
+# module (P2SH derivation only — never submits Kaspa transactions).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+stroemnet-storage = { path = "../storage" }
+toml = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tracing-subscriber = { workspace = true }
+url = { workspace = true }
+rustls = { version = "0.23", features = ["ring"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { workspace = true, features = ["sync", "macros", "rt"] }
+wasm-bindgen-futures = { workspace = true }
+wasm-bindgen = { workspace = true }
+tsify-next = { workspace = true }
+getrandom-02 = { workspace = true }
+getrandom-04 = { workspace = true }
+gloo-timers = { workspace = true }
+reqwest = { workspace = true }
+
+[dev-dependencies]
+stroemnet-test-harness = { path = "../test-harness" }
+tempfile = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+alloy = { workspace = true, features = ["node-bindings"] }

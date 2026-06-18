@@ -1,0 +1,7 @@
+/contracts/ethereum/lib
+/contracts/ethereum/out
+/contracts/ethereum/cache
+*.DS_Store
+stroemnet.toml
+/target
+contracts/ethereum/deploy.sh

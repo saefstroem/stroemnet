@@ -1,0 +1,17 @@
+[package]
+name = "stroemnet-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+redb = { workspace = true }
+stroemnet-data = { path = "../data" }
+stroemnet-protocol = { path = "../protocol" }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tracing-subscriber = { workspace = true }

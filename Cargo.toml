@@ -1,0 +1,94 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/amounts",
+  "crates/handler",
+  "crates/node",
+  "crates/p2p",
+  "crates/protocol",
+  "crates/storage",
+  "crates/test-harness",
+  "crates/wasm",
+  "crates/data"
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+# Centralized `getrandom` specs. Three majors coexist in our dep tree:
+#   - 0.2 is pulled by older rand_core consumers (rand 0.8, kaspa stack)
+#   - 0.3 is pulled by newer rand_core consumers (rand 0.9, alloy stack)
+#   - 0.4 is pulled by rand 0.10 (rand_core 0.10)
+# All need their wasm-js feature enabled at the workspace level so transitive
+# RNGs resolve on `wasm32-unknown-unknown`. Each crate that pins an indirect
+# RNG version pulls the matching workspace dep below — see grep for usage.
+[workspace.dependencies]
+getrandom-02 = { package = "getrandom", version = "0.2", features = ["js"] }
+getrandom-03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+getrandom-04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
+# `kaspa-wrpc-client` (transitively rustls) needs ring with the JS-capable
+# WASM feature when targetting `wasm32-unknown-unknown`. Cargo's feature
+# unification means declaring it once at the workspace level applies to
+# every crate in the dep graph that pulls ring. Mirrors `kaspa-wrpc-wasm`'s
+# Cargo.toml in the rusty-kaspa repo.
+ring = { version = "0.17", features = ["wasm32_unknown_unknown_js"] }
+
+ahash = "0.8.12"
+alloy = { version = "2.0.5", features = ["essentials"] }
+alloy-primitives = "1.6.0"
+async-channel = "2.5.0"
+borsh = { version = "1.6.1", features = ["derive"] }
+console_error_panic_hook = "0.1"
+futures = "0.3.32"
+gloo-net = { version = "0.5", features = ["websocket"] }
+gloo-timers = { version = "0.3", features = ["futures"] }
+hex = "0.4.3"
+indexmap = "2"
+itertools = "0.14.0"
+js-sys = "=0.3.77"
+k256 = { version = "0.13", default-features = false, features = ["alloc", "ecdsa", "schnorr", "sha256"] }
+parking_lot = "0.12"
+redb = "4.1.0"
+reqwest = { version = "0.13.4", features = ["json", "query"] }
+secp256k1 = { version = "0.31.1", features = ["global-context", "rand"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+serde_json = "1.0.150"
+sha2 = "0.11.0"
+tempfile = "3.27.0"
+thiserror = "2.0.18"
+tokio = { version = "1.52.3", default-features = false }
+tokio-tungstenite = "0.29.0"
+toml = "1.1.2"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tsify-next = "0.5"
+url = "2.5"
+wasm-bindgen = "=0.2.100"
+wasm-bindgen-futures = "=0.4.50"
+wasm-bindgen-test = "=0.3.50"
+
+kaspa-addresses = { git = "https://github.com/kaspanet/rusty-kaspa.git", tag = "v1.1.0" }
+kaspa-consensus-core = { git = "https://github.com/kaspanet/rusty-kaspa.git", tag = "v1.1.0", features = ["wasm32-sdk"] }
+kaspa-hashes = { git = "https://github.com/kaspanet/rusty-kaspa.git", tag = "v1.1.0" }
+kaspa-rpc-core = { git = "https://github.com/kaspanet/rusty-kaspa.git", tag = "v1.1.0" }
+kaspa-txscript = { git = "https://github.com/kaspanet/rusty-kaspa.git", tag = "v1.1.0", features = ["wasm32-sdk"] }
+kaspa-txscript-errors = { git = "https://github.com/kaspanet/rusty-kaspa.git", tag = "v1.1.0" }
+kaspa-wrpc-client = { git = "https://github.com/kaspanet/rusty-kaspa.git", tag = "v1.1.0", features = ["wasm32-sdk"] }
+
+[profile]
+
+[profile.wasm-dev]
+inherits = "dev"
+opt-level = 1
+
+[profile.server-dev]
+inherits = "dev"
+
+[profile.android-dev]
+inherits = "dev"
+
+[patch.crates-io]
+serde_nested_with = { git = "https://github.com/murar8/serde_nested_with", tag = "0.2.6" }

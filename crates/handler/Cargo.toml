@@ -1,0 +1,25 @@
+[package]
+name = "stroemnet-handler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+hex = { workspace = true }
+stroemnet-amounts = { path = "../amounts" }
+stroemnet-protocol = { path = "../protocol" }
+ahash = { workspace = true }
+alloy = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true, features = ["sync", "macros", "rt", "rt-multi-thread"] }
+
+# WASM has no threads — drop `rt-multi-thread`. alloy → elliptic-curve →
+# rand_core also pulls getrandom 0.2, which refuses to compile without the
+# `js` feature on wasm32, so the centralized workspace dep activates it.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { workspace = true, features = ["sync", "macros", "rt"] }
+getrandom-02 = { workspace = true }
