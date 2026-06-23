@@ -93,7 +93,7 @@ impl StroemGateway {
             .take()
             .ok_or_else(|| JsError::new("gateway already consumed"))?;
 
-        let (node, quote_rx) = Node::start(cfg, None)
+        let (node, quote_rx) = Node::start(cfg, None, None)
             .await
             .map_err(|e| JsError::new(&format!("Node::start: {e}")))?;
         let node = Arc::new(node);

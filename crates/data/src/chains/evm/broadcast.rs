@@ -19,6 +19,14 @@ fn parse_value(value: &str) -> Result<U256> {
         .map_err(|e| DataError::Broadcast(format!("amount {value}: {e}")))
 }
 
+/// Checks if a given secret matches the provided secret hash using SHA-256.
+fn secret_matches(secret: &[u8; 32], secret_hash: &[u8]) -> bool {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(secret);
+    hasher.finalize().as_slice() == secret_hash
+}
+
 async fn resolve_gas_price<P: Provider>(
     provider: &P,
     gas_payment: GasPayment,
@@ -100,13 +108,57 @@ pub(super) async fn submit_claim<P: Provider>(
 ) -> Result<()> {
     // Instantiate a new contract instance
     let stroem_htlc = StroemHTLCV1::new(htlc_address, provider);
+
+    // Check if the swap is claimable by fetching its details from the contract
+    let swap = stroem_htlc
+        .swaps(FixedBytes::from(reveal.swap_id))
+        .call()
+        .await
+        .map_err(|e| DataError::Broadcast(format!("swaps lookup: {e}")))?;
+    
+    // Validate the swap state before attempting to claim
+    if !swap.initialized || swap.finalized {
+        tracing::warn!(
+            "EVM claim skipped for {}: not claimable (initialized={}, finalized={})",
+            hex::encode(reveal.swap_id),
+            swap.initialized,
+            swap.finalized,
+        );
+        return Ok(());
+    }
+
+    // Check if the revealed secret matches the on-chain secret hash
+    if !secret_matches(&reveal.secret, swap.secretHash.as_slice()) {
+        tracing::warn!(
+            "EVM claim skipped for {}: revealed secret does not match on-chain hash",
+            hex::encode(reveal.swap_id),
+        );
+        return Ok(());
+    }
+
+    // Check if the current block timestamp is less than the swap's timelock
+    if let Some(now) = current_block_timestamp(provider).await {
+        let timelock = u64::try_from(swap.timelock).unwrap_or(u64::MAX);
+        if now >= timelock {
+            tracing::warn!(
+                "EVM claim skipped for {}: timelock expired (chain_now={now} >= {timelock})",
+                hex::encode(reveal.swap_id),
+            );
+            return Ok(());
+        }
+    }
+
+    // Prepare the claim transaction
     let mut call = stroem_htlc.claim(
         FixedBytes::from(reveal.swap_id),
         FixedBytes::from(reveal.secret),
     );
+
+    // Resolve the gas price based on the provided gas payment strategy
     if let Some(gp) = resolve_gas_price(provider, gas_payment).await? {
         call = call.gas_price(gp);
     }
+    
     // Send the transaction and wait for it to be mined, returning a DataError if any step fails
     let pending = call
         .send()

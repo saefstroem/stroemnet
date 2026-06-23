@@ -58,7 +58,9 @@ mod daemon {
         let node_config = config.into_node_config(saved_peers)?;
         let cursor_store: Arc<dyn stroemnet_data::CursorStore> =
             Arc::new(stroemnet_storage::DbCursorStore::new(peer_db.clone()));
-        let node = Node::start(node_config, Some(cursor_store)).await?;
+        let swap_store: Arc<dyn stroemnet_data::SwapStore> =
+            Arc::new(stroemnet_storage::DbSwapStore::new(peer_db.clone()));
+        let node = Node::start(node_config, Some(cursor_store), Some(swap_store)).await?;
 
         let network_clone = node.network.clone();
         let peer_db_clone = peer_db.clone();

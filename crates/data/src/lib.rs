@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use ahash::AHashMap;
 use serde_json::Value;
-use stroemnet_protocol::v1::{ChainEvent, CommitmentV1};
+use stroemnet_protocol::v1::{ChainEvent, CommitmentV1, RefundV1, RevealV1};
 use stroemnet_protocol::{ChainClock, ChannelId};
 
 use chains::build_buffer;
@@ -33,6 +33,29 @@ pub trait CursorStore: MaybeSend {
     fn save(&self, channel_id: ChannelId, cursor: &[u8]);
 }
 
+#[derive(Debug, Clone, Default, borsh::BorshSerialize, borsh::BorshDeserialize)]
+pub struct PersistedSwap {
+    pub commitment: Option<CommitmentV1>,
+    pub script: Option<UtxoScript>,
+    pub pending_refund: Option<(RefundV1, u64)>,
+    pub pending_claim: Option<RevealV1>,
+}
+
+impl PersistedSwap {
+    pub fn is_empty(&self) -> bool {
+        self.commitment.is_none()
+            && self.script.is_none()
+            && self.pending_refund.is_none()
+            && self.pending_claim.is_none()
+    }
+}
+
+pub trait SwapStore: MaybeSend {
+    fn load_channel(&self, channel_id: ChannelId) -> Vec<([u8; 32], Vec<u8>)>;
+    fn save(&self, channel_id: ChannelId, swap_id: [u8; 32], record: &[u8]);
+    fn delete(&self, channel_id: ChannelId, swap_id: [u8; 32]);
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 /// A boxed future that is Send, which is required for buffers that may be used across threads.
 /// At least for native code
@@ -50,7 +73,7 @@ pub struct ProposalVerification {
     pub balance_sufficient: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, borsh::BorshSerialize, borsh::BorshDeserialize)]
 /// The data needed to detect and handle a UTXO script on the chain,
 /// including the redeem script, its expiration time, and the target address for deposits.
 pub struct UtxoScript {
@@ -154,12 +177,20 @@ impl ChainDataSink {
     pub async fn new(
         channels: AHashMap<ChannelId, (Value, Option<String>)>,
         cursor_store: Option<Arc<dyn CursorStore>>,
+        swap_store: Option<Arc<dyn SwapStore>>,
     ) -> Result<Self> {
         let mut buffers: AHashMap<ChannelId, Box<dyn ChainDataBuffer>> = AHashMap::new();
         for (channel_id, (cfg, lp_key)) in channels {
             buffers.insert(
                 channel_id,
-                build_buffer(channel_id, &cfg, lp_key, cursor_store.clone()).await?,
+                build_buffer(
+                    channel_id,
+                    &cfg,
+                    lp_key,
+                    cursor_store.clone(),
+                    swap_store.clone(),
+                )
+                .await?,
             );
         }
         Ok(Self { buffers })

@@ -390,6 +390,7 @@ async fn prepare_htlc_spend(
     private_key: &str,
     coinbase_maturity: u64,
     commitment: &CommitmentV1,
+    stored_script: Option<&[u8]>,
 ) -> Result<HtlcSpend> {
     // Compute the kaspa network prefix for the connected client.
     let prefix = prefix_for(client).await?;
@@ -397,10 +398,12 @@ async fn prepare_htlc_spend(
     // Derive the signer from the provided private key and network prefix.
     let signer = Signer340::derive(private_key, prefix)?;
 
-    // Extract the htlc script, sender and receiver script public keys, and unlock time from the commitment.
-    // This time we need all of the parameters
-    let (htlc_script, sender_spk, receiver_spk, unlock_ts_ms) =
+    let (derived_script, sender_spk, receiver_spk, unlock_ts_ms) =
         htlc_script_from_commitment(commitment)?;
+    let htlc_script = match stored_script {
+        Some(s) => s.to_vec(),
+        None => derived_script,
+    };
 
     // Compute the spk of the htlc.
     let htlc_spk = pay_to_script_hash_script(&htlc_script);
@@ -591,10 +594,13 @@ pub(super) async fn submit_reveal(
     coinbase_maturity: u64,
     commitment: &CommitmentV1,
     reveal: &RevealV1,
+    stored_script: Option<&[u8]>,
 ) -> Result<()> {
     // Prepare the htlc for spending which essentially means gathering
     // all the necessary information and UTXOs for signing and broadcasting the transaction
-    let ctx = prepare_htlc_spend(client, private_key, coinbase_maturity, commitment).await?;
+    let ctx =
+        prepare_htlc_spend(client, private_key, coinbase_maturity, commitment, stored_script)
+            .await?;
 
     // We want to execute the branch that is the claim branch
     // and for that we need to push optrue and preimage as a signature
@@ -632,10 +638,13 @@ pub(super) async fn submit_refund(
     private_key: &str,
     coinbase_maturity: u64,
     commitment: &CommitmentV1,
+    stored_script: Option<&[u8]>,
 ) -> Result<()> {
     // Prepare the htlc for spending which essentially means gathering
     // all the necessary information and UTXOs for signing and broadcasting the transaction
-    let ctx = prepare_htlc_spend(client, private_key, coinbase_maturity, commitment).await?;
+    let ctx =
+        prepare_htlc_spend(client, private_key, coinbase_maturity, commitment, stored_script)
+            .await?;
 
     // This time we want to trigger refund branch which effectively just means
     // passing opfalse and setting proper lock time for the transaction

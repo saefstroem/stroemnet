@@ -26,7 +26,7 @@ use tokio::sync::mpsc::Receiver;
 
 use crate::{
     BufFut, ChainDataBuffer, CursorStore, DataError, ProposalVerification, Result,
-    ScriptAnnouncement, UtxoScript, UtxoScriptDetector,
+    ScriptAnnouncement, SwapStore, UtxoScript, UtxoScriptDetector,
 };
 
 const DEFAULT_COINBASE_MATURITY: u64 = 100;
@@ -58,6 +58,46 @@ fn default_script_ttl_secs() -> u64 {
     DEFAULT_SCRIPT_TTL_SECS
 }
 
+type PersistedKaspaState = (
+    AHashMap<[u8; 32], CommitmentV1>,
+    AHashMap<[u8; 32], UtxoScript>,
+    Vec<(RefundV1, u64)>,
+    Vec<RevealV1>,
+);
+
+fn load_persisted_state(
+    swap_store: Option<&Arc<dyn SwapStore>>,
+    channel_id: ChannelId,
+) -> PersistedKaspaState {
+    let mut commitments = AHashMap::new();
+    let mut scripts = AHashMap::new();
+    let mut pending_refunds = Vec::new();
+    let mut pending_claims = Vec::new();
+    let Some(store) = swap_store else {
+        return (commitments, scripts, pending_refunds, pending_claims);
+    };
+    for (swap_id, bytes) in store.load_channel(channel_id) {
+        match borsh::from_slice::<crate::PersistedSwap>(&bytes) {
+            Ok(rec) => {
+                if let Some(c) = rec.commitment {
+                    commitments.insert(swap_id, c);
+                }
+                if let Some(s) = rec.script {
+                    scripts.insert(swap_id, s);
+                }
+                if let Some(pr) = rec.pending_refund {
+                    pending_refunds.push(pr);
+                }
+                if let Some(pc) = rec.pending_claim {
+                    pending_claims.push(pc);
+                }
+            }
+            Err(e) => tracing::warn!("kaspa seed swap {}: {e}", hex::encode(swap_id)),
+        }
+    }
+    (commitments, scripts, pending_refunds, pending_claims)
+}
+
 pub(crate) struct Kaspa {
     channel_id: ChannelId,
     network_id: String,
@@ -73,6 +113,8 @@ pub(crate) struct Kaspa {
     pending_refunds: Mutex<Vec<(RefundV1, u64)>>,
     pending_claims: Mutex<Vec<RevealV1>>,
     announcements: Mutex<Vec<ScriptAnnouncement>>,
+    scripts: Mutex<AHashMap<[u8; 32], UtxoScript>>,
+    swap_store: Option<Arc<dyn SwapStore>>,
 }
 
 impl Kaspa {
@@ -81,6 +123,7 @@ impl Kaspa {
         cfg: &Value,
         private_key: Option<String>,
         cursor_store: Option<Arc<dyn CursorStore>>,
+        swap_store: Option<Arc<dyn SwapStore>>,
     ) -> Result<Self> {
         let cfg: KaspaConfig = serde_json::from_value(cfg.clone())
             .map_err(|e| DataError::Config(format!("kaspa config: {e}")))?;
@@ -135,6 +178,18 @@ impl Kaspa {
             cfg.participate_ccr,
         );
 
+        let (commitments, scripts, pending_refunds, pending_claims) =
+            load_persisted_state(swap_store.as_ref(), channel_id);
+        if !commitments.is_empty() || !pending_refunds.is_empty() || !pending_claims.is_empty() {
+            tracing::info!(
+                "Kaspa buffer {channel_id} restored {} commitment(s), {} script(s), {} refund(s), {} claim(s) from store",
+                commitments.len(),
+                scripts.len(),
+                pending_refunds.len(),
+                pending_claims.len(),
+            );
+        }
+
         Ok(Self {
             channel_id,
             network_id: cfg.network_id,
@@ -146,10 +201,12 @@ impl Kaspa {
             client,
             utxo_scripts: Arc::new(RwLock::new(AHashMap::new())),
             safe_blocks: Mutex::new(rx),
-            commitments: Mutex::new(AHashMap::new()),
-            pending_refunds: Mutex::new(Vec::new()),
-            pending_claims: Mutex::new(Vec::new()),
+            commitments: Mutex::new(commitments),
+            pending_refunds: Mutex::new(pending_refunds),
+            pending_claims: Mutex::new(pending_claims),
             announcements: Mutex::new(Vec::new()),
+            scripts: Mutex::new(scripts),
+            swap_store,
         })
     }
 
@@ -170,7 +227,52 @@ impl Kaspa {
         self.commitments.lock().unwrap().get(swap_id).cloned()
     }
 
+    fn script(&self, swap_id: &[u8; 32]) -> Option<UtxoScript> {
+        self.scripts.lock().unwrap().get(swap_id).cloned()
+    }
+
+    fn persist_swap(&self, swap_id: [u8; 32]) {
+        let Some(store) = &self.swap_store else {
+            return;
+        };
+        let commitment = self.commitments.lock().unwrap().get(&swap_id).cloned();
+        let pending_refund = self
+            .pending_refunds
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(r, _)| r.swap_id == swap_id)
+            .map(|(r, ts)| (r.clone(), *ts));
+        let pending_claim = self
+            .pending_claims
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|c| c.swap_id == swap_id)
+            .cloned();
+        let script = self.scripts.lock().unwrap().get(&swap_id).cloned();
+        let record = crate::PersistedSwap {
+            commitment,
+            script,
+            pending_refund,
+            pending_claim,
+        };
+        if record.is_empty() {
+            store.delete(self.channel_id, swap_id);
+        } else {
+            match borsh::to_vec(&record) {
+                Ok(bytes) => store.save(self.channel_id, swap_id, &bytes),
+                Err(e) => tracing::warn!("kaspa persist swap {} encode: {e}", hex::encode(swap_id)),
+            }
+        }
+    }
+
     fn track_actionable_event(&self, event: &ChainEvent) {
+        let swap_id = match event {
+            ChainEvent::Commitment(c) => c.swap_id,
+            ChainEvent::Reveal(r) => r.swap_id,
+            ChainEvent::Refund(r) => r.swap_id,
+        };
         if let ChainEvent::Commitment(c) = event {
             self.cache_commitment(c);
         }
@@ -180,18 +282,17 @@ impl Kaspa {
             self.participate_ccr,
         );
         match event {
-            ChainEvent::Reveal(r) => self
-                .pending_claims
-                .lock()
-                .unwrap()
-                .retain(|c| c.swap_id != r.swap_id),
-            ChainEvent::Refund(r) => self
-                .pending_claims
-                .lock()
-                .unwrap()
-                .retain(|c| c.swap_id != r.swap_id),
+            ChainEvent::Reveal(_) | ChainEvent::Refund(_) => {
+                self.pending_claims
+                    .lock()
+                    .unwrap()
+                    .retain(|c| c.swap_id != swap_id);
+                self.commitments.lock().unwrap().remove(&swap_id);
+                self.scripts.lock().unwrap().remove(&swap_id);
+            }
             ChainEvent::Commitment(_) => {}
         }
+        self.persist_swap(swap_id);
     }
 
     async fn prune_scripts(&self) {
@@ -229,6 +330,7 @@ impl Kaspa {
                 .collect()
         };
         for swap_id in ready {
+            let stored = self.script(&swap_id);
             let remove = match self.commitment(&swap_id) {
                 None => true,
                 Some(commitment) => match broadcast::submit_refund(
@@ -236,6 +338,7 @@ impl Kaspa {
                     self.key().unwrap_or_default(),
                     self.coinbase_maturity,
                     &commitment,
+                    stored.as_ref().map(|s| s.redeem_script.as_slice()),
                 )
                 .await
                 {
@@ -251,6 +354,7 @@ impl Kaspa {
                     .lock()
                     .unwrap()
                     .retain(|(r, _)| r.swap_id != swap_id);
+                self.persist_swap(swap_id);
             }
         }
     }
@@ -264,20 +368,24 @@ impl Kaspa {
             let Some(commitment) = self.commitment(&reveal.swap_id) else {
                 continue;
             };
+            let stored = self.script(&reveal.swap_id);
             match broadcast::submit_reveal(
                 &self.client,
                 self.key().unwrap_or_default(),
                 self.coinbase_maturity,
                 &commitment,
                 &reveal,
+                stored.as_ref().map(|s| s.redeem_script.as_slice()),
             )
             .await
             {
-                Ok(()) => self
-                    .pending_claims
-                    .lock()
-                    .unwrap()
-                    .retain(|c| c.swap_id != reveal.swap_id),
+                Ok(()) => {
+                    self.pending_claims
+                        .lock()
+                        .unwrap()
+                        .retain(|c| c.swap_id != reveal.swap_id);
+                    self.persist_swap(reveal.swap_id);
+                }
                 Err(e) => {
                     tracing::error!("kaspa claim retry for {}: {e}", hex::encode(reveal.swap_id))
                 }
@@ -319,11 +427,18 @@ impl ChainDataBuffer for Kaspa {
                 )
                 .await?;
                 if self.participate_ccr {
-                    let mut pending = self.pending_refunds.lock().unwrap();
-                    for (swap_id, unlock_ts) in outcomes.refunds {
-                        if !pending.iter().any(|(r, _)| r.swap_id == swap_id) {
-                            pending.push((RefundV1::new(swap_id), unlock_ts));
+                    let mut pushed = Vec::new();
+                    {
+                        let mut pending = self.pending_refunds.lock().unwrap();
+                        for (swap_id, unlock_ts) in outcomes.refunds {
+                            if !pending.iter().any(|(r, _)| r.swap_id == swap_id) {
+                                pending.push((RefundV1::new(swap_id), unlock_ts));
+                                pushed.push(swap_id);
+                            }
                         }
+                    }
+                    for swap_id in pushed {
+                        self.persist_swap(swap_id);
                     }
                 }
                 for event in outcomes.events {
@@ -356,6 +471,10 @@ impl ChainDataBuffer for Kaspa {
                         unlock_ts: c.unlock_ts,
                         deposit_target: c.amount.value.clone(),
                     };
+                    self.scripts
+                        .lock()
+                        .unwrap()
+                        .insert(c.swap_id, script.clone());
                     self.register_internal(announce.address.clone(), script.clone())
                         .await;
                     self.announcements.lock().unwrap().push(ScriptAnnouncement {
@@ -363,14 +482,18 @@ impl ChainDataBuffer for Kaspa {
                         swap_id: c.swap_id,
                         script,
                     });
+                    self.persist_swap(c.swap_id);
                     Ok(())
                 }
                 ChainEvent::Reveal(r) => {
                     if self.participate_ccr && self.commitment(&r.swap_id).is_some() {
-                        let mut pending = self.pending_claims.lock().unwrap();
-                        if !pending.iter().any(|c| c.swap_id == r.swap_id) {
-                            pending.push(r.clone());
+                        {
+                            let mut pending = self.pending_claims.lock().unwrap();
+                            if !pending.iter().any(|c| c.swap_id == r.swap_id) {
+                                pending.push(r.clone());
+                            }
                         }
+                        self.persist_swap(r.swap_id);
                     }
                     Ok(())
                 }
@@ -383,11 +506,13 @@ impl ChainDataBuffer for Kaspa {
                             "kaspa refund: unknown commitment for swap {}",
                             hex::encode(r.swap_id)
                         )))?;
+                    let stored = self.script(&r.swap_id);
                     broadcast::submit_refund(
                         &self.client,
                         self.key()?,
                         self.coinbase_maturity,
                         &commitment,
+                        stored.as_ref().map(|s| s.redeem_script.as_slice()),
                     )
                     .await
                     .map_err(DataError::from)
@@ -461,16 +586,15 @@ impl UtxoScriptDetector for Kaspa {
                 swap_id,
                 unlock_ts,
             )?;
-            self.register_internal(
-                address,
-                UtxoScript {
-                    redeem_script,
-                    unlock_ts,
-                    deposit_target,
-                },
-            )
-            .await;
+            let script = UtxoScript {
+                redeem_script,
+                unlock_ts,
+                deposit_target,
+            };
+            self.scripts.lock().unwrap().insert(swap_id, script.clone());
+            self.register_internal(address, script).await;
             self.prune_scripts().await;
+            self.persist_swap(swap_id);
             Ok(())
         })
     }

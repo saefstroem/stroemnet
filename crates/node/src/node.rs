@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use ahash::AHashMap;
 use stroemnet_amounts::PriceStorage;
 use stroemnet_data::ChainDataSink;
-use stroemnet_data::CursorStore;
+use stroemnet_data::{CursorStore, SwapStore};
 use stroemnet_handler::{Effect, Handler, HandlerConfig};
 use stroemnet_p2p::wire::message::{P2pMsg, ScriptAnnounce};
 use stroemnet_p2p::{P2p, P2pConfig};
@@ -69,6 +69,7 @@ impl Node {
     pub async fn start(
         cfg: NodeConfig,
         cursor_store: Option<Arc<dyn CursorStore>>,
+        swap_store: Option<Arc<dyn SwapStore>>,
     ) -> Result<StartOutput> {
         tracing::info!("Starting stroemnet node...");
 
@@ -86,7 +87,7 @@ impl Node {
         // Build the handler and chain data sink based on the provided configuration,
         // which includes channel specifications and other parameters.
         let (handler, sink) =
-            build_handler_and_sink(cfg.handler, cfg.channels, cursor_store).await?;
+            build_handler_and_sink(cfg.handler, cfg.channels, cursor_store, swap_store).await?;
 
         #[cfg(not(target_arch = "wasm32"))]
         // only native nodes participate in discovering and dialing peers, since they
@@ -437,6 +438,7 @@ async fn build_handler_and_sink(
     handler_config: HandlerConfig,
     channels: AHashMap<ChannelId, ChannelSpec>,
     cursor_store: Option<Arc<dyn CursorStore>>,
+    swap_store: Option<Arc<dyn SwapStore>>,
 ) -> Result<(Arc<Handler>, Arc<ChainDataSink>)> {
     // We extract the channel ids from the configuration to initialize the price storage and swap tracker,
     let channel_ids: Vec<ChannelId> = channels.keys().copied().collect();
@@ -456,7 +458,7 @@ async fn build_handler_and_sink(
     }
 
     // Create a new chain data sink
-    let sink = ChainDataSink::new(sink_channels, cursor_store)
+    let sink = ChainDataSink::new(sink_channels, cursor_store, swap_store)
         .await
         .map_err(|e| StroemnetError::Other(format!("chain data sink: {e}")))?;
 

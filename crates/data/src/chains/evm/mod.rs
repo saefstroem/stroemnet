@@ -15,7 +15,7 @@ use stroemnet_protocol::ChannelId;
 use stroemnet_protocol::now_unix_secs;
 use stroemnet_protocol::v1::{ChainEvent, RefundV1, RevealV1};
 
-use crate::{BufFut, ChainDataBuffer, DataError, ProposalVerification, Result};
+use crate::{BufFut, ChainDataBuffer, DataError, PersistedSwap, ProposalVerification, Result, SwapStore};
 use finality::{DEFAULT_MAX_BLOCKS_PER_POLL, DEFAULT_POLL_INTERVAL_MS, PollState};
 
 #[derive(Deserialize, Clone, Copy, Default, Debug)]
@@ -58,6 +58,33 @@ fn default_max_blocks_per_poll() -> u64 {
     DEFAULT_MAX_BLOCKS_PER_POLL
 }
 
+/// Loads the persisted state of pending refunds and claims 
+/// from the swap store for the given channel ID
+fn load_persisted_state(
+    swap_store: Option<&Arc<dyn SwapStore>>,
+    channel_id: ChannelId,
+) -> (Vec<(RefundV1, u64)>, Vec<RevealV1>) {
+    let mut pending_refunds = Vec::new();
+    let mut pending_claims = Vec::new();
+    let Some(store) = swap_store else {
+        return (pending_refunds, pending_claims);
+    };
+    for (swap_id, bytes) in store.load_channel(channel_id) {
+        match borsh::from_slice::<PersistedSwap>(&bytes) {
+            Ok(rec) => {
+                if let Some(pr) = rec.pending_refund {
+                    pending_refunds.push(pr);
+                }
+                if let Some(pc) = rec.pending_claim {
+                    pending_claims.push(pc);
+                }
+            }
+            Err(e) => tracing::warn!("EVM seed swap {}: {e}", hex::encode(swap_id)),
+        }
+    }
+    (pending_refunds, pending_claims)
+}
+
 /// The state of the evm from the perspective of polling
 struct EvmState {
     poll: PollState,
@@ -81,6 +108,7 @@ pub(crate) struct Evm {
     signed_provider: Option<DynProvider>, // provider for signing and broadcasting transactions (only for LP)
     state: Mutex<EvmState>, // the state of the evm buffer, including the poll state and pending refunds
     cursor_store: Option<Arc<dyn crate::CursorStore>>, // optional cursor store for persisting the polling state (for native)
+    swap_store: Option<Arc<dyn crate::SwapStore>>,
 }
 
 impl Evm {
@@ -93,6 +121,7 @@ impl Evm {
         cfg: &Value,
         private_key: Option<String>,
         cursor_store: Option<Arc<dyn crate::CursorStore>>,
+        swap_store: Option<Arc<dyn crate::SwapStore>>,
     ) -> Result<Self> {
         // Parse the configuration from the provided JSON value
         let cfg: EvmConfig = serde_json::from_value(cfg.clone())
@@ -157,6 +186,15 @@ impl Evm {
             cfg.participate_ccr,
         );
 
+        let (pending_refunds, pending_claims) = load_persisted_state(swap_store.as_ref(), channel_id);
+        if !pending_refunds.is_empty() || !pending_claims.is_empty() {
+            tracing::info!(
+                "EVM buffer {channel_id} restored {} pending refund(s) and {} pending claim(s) from store",
+                pending_refunds.len(),
+                pending_claims.len(),
+            );
+        }
+
         // Return a new instance of the EVM buffer with
         // the initialized state and providers
         Ok(Self {
@@ -172,24 +210,63 @@ impl Evm {
             signed_provider,
             state: Mutex::new(EvmState {
                 poll: PollState { cursor },
-                pending_refunds: Vec::new(),
-                pending_claims: Vec::new(),
+                pending_refunds,
+                pending_claims,
                 next_poll_secs: 0,
                 last_block_ts: None,
             }),
             cursor_store,
+            swap_store,
         })
     }
 
-    /// Notify that an event should be tracked
-    fn track_actionable_event(&self, event: &ChainEvent) {
-        let mut st = self.state.lock().unwrap();
-        super::queue_dequeue_refund_event(&mut st.pending_refunds, event, self.participate_ccr);
-        match event {
-            ChainEvent::Reveal(r) => st.pending_claims.retain(|c| c.swap_id != r.swap_id),
-            ChainEvent::Refund(r) => st.pending_claims.retain(|c| c.swap_id != r.swap_id),
-            ChainEvent::Commitment(_) => {}
+    fn persist_swap(&self, swap_id: [u8; 32]) {
+        let Some(store) = &self.swap_store else {
+            return;
+        };
+        let record = {
+            let st = self.state.lock().unwrap();
+            crate::PersistedSwap {
+                commitment: None,
+                script: None,
+                pending_refund: st
+                    .pending_refunds
+                    .iter()
+                    .find(|(r, _)| r.swap_id == swap_id)
+                    .map(|(r, ts)| (r.clone(), *ts)),
+                pending_claim: st
+                    .pending_claims
+                    .iter()
+                    .find(|c| c.swap_id == swap_id)
+                    .cloned(),
+            }
+        };
+        if record.is_empty() {
+            store.delete(self.channel_id, swap_id);
+        } else {
+            match borsh::to_vec(&record) {
+                Ok(bytes) => store.save(self.channel_id, swap_id, &bytes),
+                Err(e) => tracing::warn!("EVM persist swap {} encode: {e}", hex::encode(swap_id)),
+            }
         }
+    }
+
+    fn track_actionable_event(&self, event: &ChainEvent) {
+        let swap_id = match event {
+            ChainEvent::Commitment(c) => c.swap_id,
+            ChainEvent::Reveal(r) => r.swap_id,
+            ChainEvent::Refund(r) => r.swap_id,
+        };
+        {
+            let mut st = self.state.lock().unwrap();
+            super::queue_dequeue_refund_event(&mut st.pending_refunds, event, self.participate_ccr);
+            match event {
+                ChainEvent::Reveal(r) => st.pending_claims.retain(|c| c.swap_id != r.swap_id),
+                ChainEvent::Refund(r) => st.pending_claims.retain(|c| c.swap_id != r.swap_id),
+                ChainEvent::Commitment(_) => {}
+            }
+        }
+        self.persist_swap(swap_id);
     }
 
     /// Retrieve the signer provider
@@ -248,6 +325,7 @@ impl Evm {
                         .unwrap()
                         .pending_refunds
                         .retain(|(r, _)| r.swap_id != swap_id);
+                    self.persist_swap(swap_id);
                 }
                 Err(e) => {
                     tracing::error!("EVM scheduled refund {}: {e}", hex::encode(swap_id));
@@ -273,6 +351,7 @@ impl Evm {
                         .unwrap()
                         .pending_claims
                         .retain(|c| c.swap_id != reveal.swap_id);
+                    self.persist_swap(reveal.swap_id);
                 }
                 Err(e) => {
                     tracing::error!("EVM claim retry for {}: {e}", hex::encode(reveal.swap_id));
@@ -373,12 +452,14 @@ impl ChainDataBuffer for Evm {
                 }
                 ChainEvent::Reveal(r) => {
                     if self.participate_ccr {
-                        let mut st = self.state.lock().unwrap();
-                        let known = st.pending_refunds.iter().any(|(p, _)| p.swap_id == r.swap_id);
-                        let queued = st.pending_claims.iter().any(|c| c.swap_id == r.swap_id);
-                        if known && !queued {
-                            st.pending_claims.push(r.clone());
+                        {
+                            let mut st = self.state.lock().unwrap();
+                            let queued = st.pending_claims.iter().any(|c| c.swap_id == r.swap_id);
+                            if !queued {
+                                st.pending_claims.push(r.clone());
+                            }
                         }
+                        self.persist_swap(r.swap_id);
                     }
                     Ok(())
                 }
@@ -435,5 +516,109 @@ impl ChainDataBuffer for Evm {
             )
             .await
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SwapStore;
+    use std::collections::HashMap;
+    use std::sync::Mutex as StdMutex;
+
+    #[derive(Default)]
+    struct MemSwapStore {
+        rows: StdMutex<HashMap<(u8, [u8; 32]), Vec<u8>>>,
+    }
+
+    impl crate::SwapStore for MemSwapStore {
+        fn load_channel(&self, channel_id: ChannelId) -> Vec<([u8; 32], Vec<u8>)> {
+            self.rows
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|((c, _), _)| *c == channel_id as u8)
+                .map(|((_, id), v)| (*id, v.clone()))
+                .collect()
+        }
+        fn save(&self, channel_id: ChannelId, swap_id: [u8; 32], record: &[u8]) {
+            self.rows
+                .lock()
+                .unwrap()
+                .insert((channel_id as u8, swap_id), record.to_vec());
+        }
+        fn delete(&self, channel_id: ChannelId, swap_id: [u8; 32]) {
+            self.rows.lock().unwrap().remove(&(channel_id as u8, swap_id));
+        }
+    }
+
+    async fn test_evm(swap_store: Option<Arc<dyn crate::SwapStore>>) -> Evm {
+        let read_provider = ProviderBuilder::new()
+            .connect("http://127.0.0.1:1")
+            .await
+            .unwrap()
+            .erased();
+        Evm {
+            channel_id: ChannelId::IgraGalleon,
+            htlc_address: Address::ZERO,
+            minimum_block_confirmations: 0,
+            poll_interval_secs: 1,
+            max_blocks_per_poll: 1,
+            participate_ccr: true,
+            gas_payment: GasPayment::Legacy,
+            private_key: None,
+            read_provider,
+            signed_provider: None,
+            state: Mutex::new(EvmState {
+                poll: PollState { cursor: 0 },
+                pending_refunds: Vec::new(),
+                pending_claims: Vec::new(),
+                next_poll_secs: 0,
+                last_block_ts: None,
+            }),
+            cursor_store: None,
+            swap_store,
+        }
+    }
+
+    #[tokio::test]
+    async fn reveal_enqueues_and_persists_without_pending_refund() {
+        let store = Arc::new(MemSwapStore::default());
+        let store_dyn: Arc<dyn crate::SwapStore> = store.clone();
+        let evm = test_evm(Some(store_dyn)).await;
+        assert!(evm.state.lock().unwrap().pending_refunds.is_empty());
+
+        let reveal = RevealV1::new([5u8; 32], [6u8; 32]);
+        evm.broadcast_event(&ChainEvent::Reveal(reveal.clone()))
+            .await
+            .unwrap();
+
+        assert_eq!(evm.state.lock().unwrap().pending_claims, vec![reveal.clone()]);
+        let rows = store.load_channel(ChannelId::IgraGalleon);
+        assert_eq!(rows.len(), 1);
+        let rec = borsh::from_slice::<crate::PersistedSwap>(&rows[0].1).unwrap();
+        assert_eq!(rec.pending_claim, Some(reveal));
+    }
+
+    #[test]
+    fn seeds_pending_claims_from_store() {
+        let store = Arc::new(MemSwapStore::default());
+        let reveal = RevealV1::new([1u8; 32], [2u8; 32]);
+        let rec = crate::PersistedSwap {
+            commitment: None,
+            script: None,
+            pending_refund: None,
+            pending_claim: Some(reveal.clone()),
+        };
+        store.save(
+            ChannelId::IgraGalleon,
+            reveal.swap_id,
+            &borsh::to_vec(&rec).unwrap(),
+        );
+        let store_dyn: Arc<dyn crate::SwapStore> = store;
+        let (pending_refunds, pending_claims) =
+            load_persisted_state(Some(&store_dyn), ChannelId::IgraGalleon);
+        assert!(pending_refunds.is_empty());
+        assert_eq!(pending_claims, vec![reveal]);
     }
 }

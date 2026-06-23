@@ -8,6 +8,7 @@ license.workspace = true
 redb = { workspace = true }
 stroemnet-data = { path = "../data" }
 stroemnet-protocol = { path = "../protocol" }
+hex = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }

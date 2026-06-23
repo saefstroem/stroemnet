@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::chains::evm::Evm;
 use crate::chains::kaspa::Kaspa;
-use crate::{ChainDataBuffer, CursorStore, Result};
+use crate::{ChainDataBuffer, CursorStore, Result, SwapStore};
 
 /// A factory function to build a chain data buffer based on the channel ID and configuration provided.
 pub(crate) async fn build_buffer(
@@ -17,13 +17,14 @@ pub(crate) async fn build_buffer(
     cfg: &Value,
     lp_key: Option<String>,
     cursor_store: Option<Arc<dyn CursorStore>>,
+    swap_store: Option<Arc<dyn SwapStore>>,
 ) -> Result<Box<dyn ChainDataBuffer>> {
     match channel_id {
         ChannelId::EthereumSepolia | ChannelId::IgraGalleon => Ok(Box::new(
-            Evm::connect(channel_id, cfg, lp_key, cursor_store).await?,
+            Evm::connect(channel_id, cfg, lp_key, cursor_store, swap_store).await?,
         )),
         ChannelId::KaspaTn10 => Ok(Box::new(
-            Kaspa::connect(channel_id, cfg, lp_key, cursor_store).await?,
+            Kaspa::connect(channel_id, cfg, lp_key, cursor_store, swap_store).await?,
         )),
     }
 }

@@ -62,7 +62,6 @@ impl Oracle {
         // For each channel and price, update the price storage and log the new price.
         for (channel, price) in prices {
             self.price_storage.set(channel, price);
-            tracing::info!("Updated {} price: ${:.6}", channel.to_string(), price);
         }
 
         Ok(())

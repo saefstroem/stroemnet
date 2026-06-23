@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 stroemnet-protocol = { path = "../protocol" }
 ahash = { workspace = true, features = ["serde"] }
+borsh = { workspace = true }
 futures = { workspace = true }
 hex = { workspace = true }
 indexmap = { workspace = true }

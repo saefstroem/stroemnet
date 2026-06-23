@@ -3,21 +3,18 @@ use alloy::sol;
 sol! {
     #[sol(rpc)]
     contract StroemHTLCV1 {
-        struct Swap {
-            address sender;
-            bytes sender_destination_address;
-            address receiver;
-            uint256 amount;
-            bytes32 secretHash;
-            uint256 timelock;
-            bool initialized;
-            bool finalized;
-        }
-
-        mapping(bytes32 => Swap) public swaps;
-        mapping(bytes32 => bool) public secretHashes;
-
-        uint256 public constant BPS_DENOMINATOR;
+        function swaps(bytes32 swapId)
+            external
+            view
+            returns (
+                address sender,
+                address receiver,
+                uint256 amount,
+                bytes32 secretHash,
+                uint256 timelock,
+                bool initialized,
+                bool finalized
+            );
 
         event Commitment(
             bytes32 indexed swapId,

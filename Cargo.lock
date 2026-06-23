@@ -5403,6 +5403,7 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "alloy",
+ "borsh",
  "futures",
  "getrandom 0.2.16",
  "getrandom 0.3.4",
@@ -5524,6 +5525,7 @@ dependencies = [
 name = "stroemnet-storage"
 version = "0.1.0"
 dependencies = [
+ "hex",
  "redb",
  "stroemnet-data",
  "stroemnet-protocol",
