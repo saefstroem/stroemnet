@@ -18,7 +18,7 @@ use crate::result::Result;
 /// Builds the p2p struct responsible for communicating with other ndoes
 pub(super) fn build_network(
     bootstrap_peers: Vec<String>, // the bootstrap peers
-    advertised: Option<String>, // whether we listen to any address
+    advertised: Option<String>,   // whether we listen to any address
     #[cfg(not(target_arch = "wasm32"))] dial_tx: tokio::sync::mpsc::UnboundedSender<String>,
 ) -> (Arc<P2p>, futures::channel::mpsc::Receiver<NetEvent>) {
     let net_config = P2pConfig {
@@ -49,7 +49,7 @@ pub(super) async fn build_handler_and_sink(
     let mut sink_channels = AHashMap::new();
     let mut keyed_channels = Vec::new();
 
-    // Go over all channels and insert their minimum block confirmations and 
+    // Go over all channels and insert their minimum block confirmations and
     // configuration, todo: the two DS can be merged into one.
     for (id, spec) in channels {
         if spec.lp_private_key.is_some() {

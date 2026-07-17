@@ -11,8 +11,9 @@ impl Handler {
         our_channel: ChannelId,
     ) -> Result<Option<ChannelId>> {
         let tracker_read = self.swap_tracker.read().await;
-        if let Some(record) = tracker_read.get_swap(swap_id) { // get the swap
-            
+        if let Some(record) = tracker_read.get_swap(swap_id) {
+            // get the swap
+
             // compute init source
             let init_source = ChannelId::try_from(record.init_commitment.source)?;
 

@@ -17,13 +17,13 @@ use tokio::sync::RwLock;
 /// Applies an event to the system
 pub(super) async fn apply_event(
     sink: &Arc<ChainDataSink>, // the data sink used to communicate with the blockchains
-    handler: &Arc<Handler>, // the handler that handles all swaps, tracks swaps
-    #[cfg(target_arch = "wasm32")] coordinator: &Arc<Coordinator>, 
+    handler: &Arc<Handler>,    // the handler that handles all swaps, tracks swaps
+    #[cfg(target_arch = "wasm32")] coordinator: &Arc<Coordinator>,
     #[cfg(target_arch = "wasm32")] pending_claims: &Arc<RwLock<AHashMap<[u8; 32], PendingClaim>>>,
     source: ChannelId,
     event: ChainEvent,
 ) {
-    // If this is a commitment 
+    // If this is a commitment
     #[cfg(target_arch = "wasm32")]
     if let ChainEvent::Commitment(c) = &event {
         let own_deposit = pending_claims
@@ -61,7 +61,7 @@ pub(super) async fn apply_event(
             }
             // If its a reveal transmission then it means
             // we need to transmit the secret
-            // this is only used in wasm since we are eagerly waiting 
+            // this is only used in wasm since we are eagerly waiting
             // to submit the secret
             Effect::TransmitReveal(detected) => {
                 #[cfg(target_arch = "wasm32")]
@@ -70,7 +70,7 @@ pub(super) async fn apply_event(
                     let claim_to_fire = {
                         let mut map = pending_claims.write().await;
                         match map.remove(&c.swap_id) {
-                            // ensures that the claim we computed that needs to 
+                            // ensures that the claim we computed that needs to
                             // be revealed is matching with the one we have stored in the
                             // storage
                             Some(claim) if pending_claim_matches(&claim, c) => Some(claim),

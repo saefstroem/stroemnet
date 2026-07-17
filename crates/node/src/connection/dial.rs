@@ -46,7 +46,7 @@ pub(crate) fn spawn_addr_dial_driver(
             tokio::time::timeout(std::time::Duration::from_secs(10), network.dial(&url)).await;
         match dialed {
             Ok(Ok(peer)) => {
-                // The peer is connected so now we should read from the peer 
+                // The peer is connected so now we should read from the peer
                 let events_tx = network.events_tx.clone();
                 read_from_peer_tracked(network, peer, events_tx, counter, false).await;
             }

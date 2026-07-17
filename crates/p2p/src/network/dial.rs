@@ -99,7 +99,7 @@ async fn accept_inbound(
         ConnectedPeer::handshake(format!("ws://{addr}"), transport, our_s, true).await
     };
     let timeout = std::time::Duration::from_secs(HANDSHAKE_TIMEOUT_SECS);
-    
+
     // Race handhsake against timeout
     match tokio::time::timeout(timeout, handshake).await {
         Ok(Ok(peer)) => {

@@ -7,7 +7,7 @@ impl Coordinator {
     pub(super) async fn on_proposal_request(&self, from: &str, req: ProposalRequest) -> DynResult {
         let origin = ChannelId::try_from(req.origin);
         let dest = ChannelId::try_from(req.destination);
-        
+
         // Ensure the channels that are requested are ones that we can handle
         match (origin, dest) {
             (Ok(o), Ok(d)) if self.handler.knows_channel(o) && self.handler.knows_channel(d) => {}

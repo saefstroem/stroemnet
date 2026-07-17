@@ -27,7 +27,8 @@ pub(super) fn spawn_discovery_drainer(
         // Create a DS to hold which peers we are currently calling to prevent calling the same peer
         // multiple times at the same time
         let in_flight: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
-        while let Some(url) = rx.recv().await { // as we get a new peer to dial
+        while let Some(url) = rx.recv().await {
+            // as we get a new peer to dial
             let url_norm = stroemnet_p2p::normalize_listen_addr(&url);
             // If they are already connected we are not interested in dialling
             if network.is_connected_peer(&url_norm).await {
@@ -58,14 +59,14 @@ pub(super) fn spawn_discovery_drainer(
 /// Spawns services that are mainly used in native code execution
 /// i.e. for LP nodes.
 pub(super) async fn spawn_native_services(
-    handler: Arc<Handler>, // handler which tracks swaps
-    network: Arc<P2p>, // the p2p network entrypoint
-    peer_count: Arc<AtomicUsize>, // number of connected peers
-    role: Role, // either we are lp or observer node
-    oracle_interval_secs: u64, // how often to update the prices of oracle
-    bind_addr: Option<SocketAddr>, // where to listen for data
+    handler: Arc<Handler>,                    // handler which tracks swaps
+    network: Arc<P2p>,                        // the p2p network entrypoint
+    peer_count: Arc<AtomicUsize>,             // number of connected peers
+    role: Role,                               // either we are lp or observer node
+    oracle_interval_secs: u64,                // how often to update the prices of oracle
+    bind_addr: Option<SocketAddr>,            // where to listen for data
     dial_rx: mpsc::UnboundedReceiver<String>, // where we listen for new peers that we need to dial
-    tasks: &mut Vec<JoinHandle<()>>, // all tasks that we are running
+    tasks: &mut Vec<JoinHandle<()>>,          // all tasks that we are running
 ) -> Result<()> {
     // Spawn the task that is responsible for discovering new peers and communicating with them
     spawn_discovery_drainer(network.clone(), peer_count.clone(), dial_rx, tasks);

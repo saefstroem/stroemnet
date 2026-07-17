@@ -36,7 +36,7 @@ impl Coordinator {
         }
         let channels: Vec<ChannelId> = self.sink.channels().collect();
         for chan in channels {
-            // For each channel broadcast the event to all channels, 
+            // For each channel broadcast the event to all channels,
             // todo: in the future we can restrict to only channels that are involved in this swap
             if let Err(e) = self
                 .sink

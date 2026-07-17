@@ -4,10 +4,10 @@ use stroemnet_p2p::P2p;
 
 /// Whether or not the lower node initiated the connection
 /// as we only want to maintain one of them
-/// 
+///
 /// Either the connection is inbound and we are not lower which means
 /// the other aprty is lower
-/// 
+///
 /// Or the connection is outbound and we are lower, which means we are lower
 fn lower_initiated(is_inbound: bool, we_are_lower: bool) -> bool {
     (!is_inbound && we_are_lower) || (is_inbound && !we_are_lower)
@@ -15,9 +15,9 @@ fn lower_initiated(is_inbound: bool, we_are_lower: bool) -> bool {
 
 /// Compute whether the connection should proceed or be aborted.
 pub(super) async fn should_proceed(
-    network: &Arc<P2p>, // network instance
+    network: &Arc<P2p>,     // network instance
     peer_node_id: [u8; 32], // id of the peer
-    is_inbound: bool, // whether the connection is inbound
+    is_inbound: bool,       // whether the connection is inbound
 ) -> bool {
     // If our node our id is lower then we are lower
     let we_are_lower = network.config.node_id() < peer_node_id;
@@ -39,7 +39,7 @@ pub(super) async fn should_proceed(
     let Some((idx, existing_is_inbound)) = existing else {
         return true;
     };
-    // If the existing connection is already initiated by the 
+    // If the existing connection is already initiated by the
     // lower node then we dont need to continue
     let existing_is_lower_initiated = lower_initiated(existing_is_inbound, we_are_lower);
     if !new_is_lower_initiated || existing_is_lower_initiated {
@@ -49,7 +49,6 @@ pub(super) async fn should_proceed(
         );
         return false;
     }
-
 
     // The old connection was not lower initiated so we update to use this connection instead
     // but for that we need to remove the old connection

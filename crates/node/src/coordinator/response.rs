@@ -41,7 +41,7 @@ impl Coordinator {
                 r.lp_block_confirmations,
             );
 
-            // Verify the message that it is indeed signed by the 
+            // Verify the message that it is indeed signed by the
             // claimed address and also that there is enough balance
             // to cover the swap
             let (signature_valid, balance_sufficient) = match self

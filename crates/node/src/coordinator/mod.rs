@@ -35,9 +35,9 @@ pub enum Role {
 /// level
 pub struct Coordinator {
     pub handler: Arc<Handler>, // knows about swaps and their state as well as prices
-    pub network: Arc<P2p>, // the p2p  network connecting multiple nodes
-    pub sink: Arc<ChainDataSink>, // a collection of all the channels 
-    pub role: Role, // what role this coordinator has
+    pub network: Arc<P2p>,     // the p2p  network connecting multiple nodes
+    pub sink: Arc<ChainDataSink>, // a collection of all the channels
+    pub role: Role,            // what role this coordinator has
     #[cfg(target_arch = "wasm32")]
     pub quote_tx: mpsc::UnboundedSender<CheckedQuote>, // for wasm only
     #[cfg(target_arch = "wasm32")]

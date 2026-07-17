@@ -6,7 +6,7 @@ use crate::{Handler, HandlerError};
 
 #[derive(Debug, Clone)]
 /// An onchain event yields an effect in the handler
-/// 
+///
 /// Currently we have two types of effects, a general broadcast
 /// and also the transmit reveal effect which is an effect that is commonly
 /// used by users, as a signal that they can now transmit the reveal because
@@ -31,7 +31,7 @@ impl Handler {
                 // Signal to transmit reveal is ok
                 effects.push(Effect::TransmitReveal(commitment.clone()));
                 let destination = ChannelId::try_from(commitment.destination)?;
-                
+
                 // If the destination is not the source we also need to forward this to
                 // to the destination channel as an internal commitment
                 if destination != source {
@@ -56,7 +56,6 @@ impl Handler {
             ChainEvent::Reveal(reveal) => {
                 // Handle the external reveal evet
                 self.handle_external_reveal(reveal.clone()).await?;
-
 
                 // Verify the secret and then add it as a broadcast on the other chain
                 // so that we can finalize the swap

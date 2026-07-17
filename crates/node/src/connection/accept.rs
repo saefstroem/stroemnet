@@ -14,9 +14,9 @@ use stroemnet_p2p::P2p;
 /// Spawn connection handler that binds to a listening address
 /// and handles incoming peer connections
 pub(crate) async fn spawn_accept(
-    bind_addr: SocketAddr, // the address where we are listening
-    network: Arc<P2p>, // the p2p network object
-    counter: Arc<AtomicUsize>, // peer count trackers
+    bind_addr: SocketAddr,           // the address where we are listening
+    network: Arc<P2p>,               // the p2p network object
+    counter: Arc<AtomicUsize>,       // peer count trackers
     tasks: &mut Vec<JoinHandle<()>>, // a mutable shared vector where we store tasks to cancel
 ) {
     use super::read::read_from_peer_tracked;
@@ -45,7 +45,8 @@ pub(crate) async fn spawn_accept(
                     let events_tx = net_for_inbound.events_tx.clone();
                     let net2 = net_for_inbound.clone();
                     let c2 = counter_for_inbound.clone();
-                    tokio::spawn(async move { // spawn a new task holding the permit
+                    tokio::spawn(async move {
+                        // spawn a new task holding the permit
                         // and handle the connection
                         let _permit = permit;
                         read_from_peer_tracked(net2, peer, events_tx, c2, true).await;

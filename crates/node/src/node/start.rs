@@ -41,7 +41,7 @@ impl Node {
 
         #[cfg(not(target_arch = "wasm32"))]
         let (dial_tx, dial_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-        
+
         // build network and receiver for network events
         let (network, net_events) = build_network(
             cfg.bootstrap_peers,

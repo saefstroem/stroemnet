@@ -46,7 +46,7 @@ pub struct ChannelConfig {
     pub min_confirmations: Option<u64>,
     /// The rpc url in order to connect to the node
     pub rpc_url: Option<String>,
-    /// The contract address to interact with 
+    /// The contract address to interact with
     pub htlc_address: Option<String>,
     /// How you plan to pay for gas, relevant for evm networks whether they support eip1559
     pub gas_payment: Option<String>,

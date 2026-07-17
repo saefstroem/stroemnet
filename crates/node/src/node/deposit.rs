@@ -22,7 +22,7 @@ impl Node {
             .derive_deposit(source, commitment)
             .map_err(|e| StroemnetError::Other(format!("kaspa deposit derive: {e}")))?;
         let target = commitment.amount.value.clone();
-        
+
         // Register the script
         self.sink
             .register_script(

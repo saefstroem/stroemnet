@@ -25,13 +25,13 @@ pub use error::HandlerError;
 pub fn required_init_lock_secs(
     destination: ChannelId,
     commit_buffer_secs: u64,
-    with_buffer:bool
+    with_buffer: bool,
 ) -> u64 {
     // The user needs to always lock for 2x the LP + the commit buffer
     if !with_buffer {
-        return destination.lock_time_secs() * 2 
+        return destination.lock_time_secs() * 2;
     }
-    return destination.lock_time_secs() * 2 + commit_buffer_secs
+    return destination.lock_time_secs() * 2 + commit_buffer_secs;
 }
 
 #[derive(Debug, Clone)]
@@ -49,7 +49,7 @@ pub struct HandlerConfig {
 
 #[derive(Debug)]
 pub struct Handler {
-    /// Price storage tracking prices for all channels 
+    /// Price storage tracking prices for all channels
     pub price_storage: PriceStorage,
     /// Tracking all swaps
     pub swap_tracker: Arc<RwLock<SwapTracker>>,

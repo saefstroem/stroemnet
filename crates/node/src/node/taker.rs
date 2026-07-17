@@ -41,7 +41,7 @@ impl Node {
 
     /// Register the commitment with ourselves
     /// Used in wasm in order to highlight the fact that
-    /// we soon expect our own deposit to come into the chain. 
+    /// we soon expect our own deposit to come into the chain.
     /// Example: when a kaspa deposit comes in.
     /// Returns the deposit address
     pub async fn register_commitment(

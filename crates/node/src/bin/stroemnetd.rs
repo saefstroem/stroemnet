@@ -12,7 +12,7 @@ mod daemon {
     use std::sync::Arc;
 
     use stroemnet_data::{CursorStore, SwapStore};
-use stroemnet_node::Node;
+    use stroemnet_node::Node;
     use stroemnet_node::config::DaemonConfig;
     use stroemnet_node::error::StroemnetError;
     use stroemnet_node::result::Result;
@@ -56,10 +56,8 @@ use stroemnet_node::Node;
 
         // Compute node configuration and also configure the peers
         let node_config = config.into_node_config(saved_peers)?;
-        let cursor_store: Arc<dyn CursorStore> =
-            Arc::new(DbCursorStore::new(peer_db.clone()));
-        let swap_store: Arc<dyn SwapStore> =
-            Arc::new(DbSwapStore::new(peer_db.clone()));
+        let cursor_store: Arc<dyn CursorStore> = Arc::new(DbCursorStore::new(peer_db.clone()));
+        let swap_store: Arc<dyn SwapStore> = Arc::new(DbSwapStore::new(peer_db.clone()));
 
         // Start the node on a separate tokio task
         let node = Node::start(node_config, Some(cursor_store), Some(swap_store)).await?;

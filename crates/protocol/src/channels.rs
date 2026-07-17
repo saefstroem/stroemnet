@@ -156,7 +156,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn test_is_evm_partition() {
         assert!(ChannelId::EthereumSepolia.is_evm());

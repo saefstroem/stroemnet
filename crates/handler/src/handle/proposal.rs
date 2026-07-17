@@ -109,7 +109,7 @@ impl Handler {
         // This time we enforce a buffer in order to account for the time it takes for users
         // commitment to propagate across all networks and reach us again
         let commit_unlock_offset_secs =
-            required_init_lock_secs(destination, self.config.commit_buffer_secs,true);
+            required_init_lock_secs(destination, self.config.commit_buffer_secs, true);
 
         Ok(TradeProposal {
             destination: origin,

@@ -23,7 +23,7 @@ impl P2p {
             .advertised_listen_addr
             .as_deref()
             .map(crate::normalize_listen_addr); // compute our listening address
-        
+
         // compute all connected peers listening address
         let connected: std::collections::HashSet<String> = self
             .connected_peers

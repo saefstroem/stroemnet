@@ -26,19 +26,23 @@ impl DaemonConfig {
     pub fn into_node_config(self, db_peers: Vec<String>) -> Result<NodeConfig> {
         // Create ds to store all activated channels
         let mut channels: AHashMap<ChannelId, ChannelSpec> = AHashMap::new();
-        for (name, ch) in self.channels { // go over all channels
+        for (name, ch) in self.channels {
+            // go over all channels
             let id = channel_id_from_name(&name)?;
-            if self.lp && ch.private_key.is_none() { // lp mode requires private key 
+            if self.lp && ch.private_key.is_none() {
+                // lp mode requires private key
                 return Err(StroemnetError::Env(format!(
                     "LP mode: channel '{name}' requires private_key"
                 )));
             }
-            if ch.participate_ccr && ch.private_key.is_none() { // ccr mode requires private key with gas
+            if ch.participate_ccr && ch.private_key.is_none() {
+                // ccr mode requires private key with gas
                 return Err(StroemnetError::Env(format!(
                     "CCR mode: channel '{name}' requires private_key"
                 )));
             }
-            if self.lp && !ch.participate_ccr { // if you are lp you are by definition ccr as well
+            if self.lp && !ch.participate_ccr {
+                // if you are lp you are by definition ccr as well
                 return Err(StroemnetError::Env(format!(
                     "LP mode: channel '{name}' requires participate_ccr = true so the LP claims its own settled legs"
                 )));
@@ -65,7 +69,7 @@ impl DaemonConfig {
             }
         }
 
-        // Put all saved peers as bootstrap peers 
+        // Put all saved peers as bootstrap peers
         let mut bootstrap_peers = self.bootstrap_peers;
         for p in db_peers {
             if !bootstrap_peers.contains(&p) {

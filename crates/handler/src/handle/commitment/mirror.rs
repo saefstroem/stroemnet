@@ -64,11 +64,8 @@ impl Handler {
         let remaining = init_commitment.unlock_ts.saturating_sub(source_now);
 
         // Compute the required threshold for the destination chain
-        let threshold = required_init_lock_secs(
-            destination_channel,
-            self.config.commit_buffer_secs,
-            false
-        );
+        let threshold =
+            required_init_lock_secs(destination_channel, self.config.commit_buffer_secs, false);
 
         // If its below the threshold we cannot accept this swap, the only
         // way forward is a refund
