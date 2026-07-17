@@ -25,7 +25,7 @@ mod daemon {
         let _ = rustls::crypto::ring::default_provider().install_default();
         tracing_subscriber::fmt::init();
 
-        /// Read the confguration for the node
+        // Read the confguration for the node
         let config_path = std::env::args()
             .nth(1)
             .unwrap_or_else(|| "stroemnet.toml".to_string());
