@@ -101,10 +101,9 @@ mod tests {
             .get_counterparty_channel_id(&swap_id, ChannelId::KaspaTn10)
             .await
             .unwrap();
-        assert_eq!(
-            result,
-            Some(ChannelId::KaspaTn10),
-            "InitLock should return its destination as the counterparty channel"
+        assert!(
+            result.is_none(),
+            "no counterparty channel until the counter commitment locks"
         );
     }
 
