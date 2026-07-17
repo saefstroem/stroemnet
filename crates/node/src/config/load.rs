@@ -122,7 +122,7 @@ mod tests {
     use serde_json::json;
 
     fn lp_sample() -> &'static str {
-        "bind_addr = \"0.0.0.0:9000\"\nexternal_hostname = \"wss://x/\"\nmin_trade_usd = 1.0\nmax_trade_usd = 2.0\nspread_percent = 0.5\nprice_oracle_update_interval_secs = 60\nlp = true\n\n[channels.kaspa-tn10]\nprivate_key = \"deadbeef\"\nparticipate_ccr = true\nnetwork_id = \"testnet-10\"\n"
+        "bind_addr = \"0.0.0.0:9000\"\nexternal_hostname = \"wss://x/\"\nmin_trade_usd = 1.0\nmax_trade_usd = 2.0\nspread_percent = 0.5\nprice_oracle_update_interval_secs = 60\nlp = true\n\n[channels.kaspa-tn10]\nprivate_key = \"deadbeef\"\nparticipate_ccr = true\nnetwork_id = \"testnet-10\"\nmin_confirmations = 30\n"
     }
 
     #[test]
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn observer_omits_keys_and_bounds() {
-        let raw = "bind_addr = \"0.0.0.0:9000\"\nexternal_hostname = \"wss://x/\"\nprice_oracle_update_interval_secs = 60\n\n[channels.kaspa-tn10]\nnetwork_id = \"testnet-10\"\n";
+        let raw = "bind_addr = \"0.0.0.0:9000\"\nexternal_hostname = \"wss://x/\"\nprice_oracle_update_interval_secs = 60\n\n[channels.kaspa-tn10]\nnetwork_id = \"testnet-10\"\nmin_confirmations = 30\n";
         let cfg: DaemonConfig = toml::from_str(raw).unwrap();
         let node = cfg.into_node_config(Vec::new()).unwrap();
         assert_eq!(node.role, Role::Observer);

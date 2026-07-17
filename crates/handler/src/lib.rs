@@ -31,7 +31,7 @@ pub fn required_init_lock_secs(
     if !with_buffer {
         return destination.lock_time_secs() * 2;
     }
-    return destination.lock_time_secs() * 2 + commit_buffer_secs;
+    destination.lock_time_secs() * 2 + commit_buffer_secs
 }
 
 #[derive(Debug, Clone)]

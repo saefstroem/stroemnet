@@ -3,9 +3,11 @@ use std::sync::Arc;
 
 use super::state::P2p;
 use crate::Result;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::error::StroemnetP2pError;
 use crate::peer::ConnectedPeer;
 use crate::transport::WsTransport;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::net::TcpListener;
 
 impl P2p {
