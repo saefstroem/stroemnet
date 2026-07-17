@@ -5297,7 +5297,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stroemnet-amounts"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ahash",
  "alloy-primitives",
@@ -5310,7 +5310,7 @@ dependencies = [
 
 [[package]]
 name = "stroemnet-data"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ahash",
  "alloy",
@@ -5344,7 +5344,7 @@ dependencies = [
 
 [[package]]
 name = "stroemnet-handler"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ahash",
  "alloy",
@@ -5359,7 +5359,7 @@ dependencies = [
 
 [[package]]
 name = "stroemnet-node"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ahash",
  "futures",
@@ -5392,7 +5392,7 @@ dependencies = [
 
 [[package]]
 name = "stroemnet-p2p"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "borsh",
  "futures",
@@ -5410,7 +5410,7 @@ dependencies = [
 
 [[package]]
 name = "stroemnet-protocol"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ahash",
  "borsh",
@@ -5427,7 +5427,7 @@ dependencies = [
 
 [[package]]
 name = "stroemnet-storage"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "hex",
  "redb",
@@ -5442,7 +5442,7 @@ dependencies = [
 
 [[package]]
 name = "stroemnet-test-harness"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ahash",
  "stroemnet-amounts",
@@ -5454,7 +5454,7 @@ dependencies = [
 
 [[package]]
 name = "stroemnet-wasm"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ahash",
  "alloy-primitives",
