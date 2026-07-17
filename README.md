@@ -4,7 +4,7 @@
 > This code has not been security-audited and is under active development. It may
 > contain bugs that lead to loss of funds. Use at your own risk on testnets only.
 
-A trustless cross-chain atomic swap protocol.
+A trustless cross-chain atomic swap protocol. This project is a P2P system where different actors interact and form an RFQ-based system. Users can request quotes and market makers compete in fulfilling them in a transparent and verifiable manner. Finally the cross-chain swap requests are fulfilled based on trustless HTLC contracts.
 
 ![stroemnet architecture](docs/architecture.svg)
 
