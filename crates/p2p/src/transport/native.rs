@@ -5,10 +5,18 @@ use futures::stream::{SplitSink, SplitStream, StreamExt};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use crate::Result;
 use crate::error::StroemnetP2pError;
+
+pub(crate) fn ws_config() -> WebSocketConfig {
+    let mut config = WebSocketConfig::default();
+    config.max_message_size = Some(crate::wire::codec::MAX_MESSAGE_BYTES);
+    config.max_frame_size = Some(crate::wire::codec::MAX_MESSAGE_BYTES);
+    config
+}
 
 #[derive(Clone)]
 pub struct WsTransport {
@@ -31,9 +39,10 @@ enum StreamKind {
 
 impl WsTransport {
     pub async fn dial(url: &str) -> Result<Self> {
-        let (ws, _resp) = tokio_tungstenite::connect_async(url)
-            .await
-            .map_err(|e| StroemnetP2pError::Io(format!("dial {url}: {e}")))?;
+        let (ws, _resp) =
+            tokio_tungstenite::connect_async_with_config(url, Some(ws_config()), false)
+                .await
+                .map_err(|e| StroemnetP2pError::Io(format!("dial {url}: {e}")))?;
         let (sink, stream) = ws.split();
         Ok(Self {
             sink: Arc::new(Mutex::new(SinkKind::Outbound(sink))),
@@ -98,6 +107,7 @@ fn ws_msg_to_bytes(msg: Message) -> Result<Option<Vec<u8>>> {
 }
 
 #[cfg(any(test, feature = "test-helpers"))]
+#[allow(clippy::expect_used)]
 pub async fn loopback_pair() -> (WsTransport, WsTransport) {
     use tokio::net::TcpListener;
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -106,7 +116,7 @@ pub async fn loopback_pair() -> (WsTransport, WsTransport) {
     let addr = listener.local_addr().expect("local_addr");
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.expect("accept");
-        let ws = tokio_tungstenite::accept_async(stream)
+        let ws = tokio_tungstenite::accept_async_with_config(stream, Some(ws_config()))
             .await
             .expect("ws accept");
         WsTransport::from_inbound(ws)
@@ -119,6 +129,7 @@ pub async fn loopback_pair() -> (WsTransport, WsTransport) {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[tokio::test]

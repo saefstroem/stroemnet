@@ -12,12 +12,16 @@ use crate::HandlerConfig;
 
 pub(crate) const TEST_SECRET: [u8; 32] = [0xAB; 32];
 
-pub(crate) fn test_secret_hash() -> [u8; 32] {
+pub(crate) fn sha256(secret: &[u8; 32]) -> [u8; 32] {
     use sha2::{Digest, Sha256};
-    let out = Sha256::digest(TEST_SECRET);
+    let out = Sha256::digest(secret);
     let mut a = [0u8; 32];
     a.copy_from_slice(&out);
     a
+}
+
+pub(crate) fn test_secret_hash() -> [u8; 32] {
+    sha256(&TEST_SECRET)
 }
 
 pub(crate) fn default_test_config() -> HandlerConfig {

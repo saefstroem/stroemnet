@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex, OnceLock};
+use parking_lot::Mutex;
+use std::sync::{Arc, OnceLock};
 use stroemnet_node::{Node, NodeConfig, SwapStatusUpdate};
 use tokio::sync::mpsc;
 #[derive(Default)]

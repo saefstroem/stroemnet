@@ -9,13 +9,23 @@ members = [
   "crates/storage",
   "crates/test-harness",
   "crates/wasm",
-  "crates/data"
+  "crates/data",
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 license = "MIT"
+
+[workspace.lints.rust]
+dead_code = "deny"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
 
 # Centralized `getrandom` specs. Three majors coexist in our dep tree:
 #   - 0.2 is pulled by older rand_core consumers (rand 0.8, kaspa stack)
@@ -38,9 +48,7 @@ ring = { version = "0.17", features = ["wasm32_unknown_unknown_js"] }
 ahash = "0.8.12"
 alloy = { version = "2.0.5", features = ["essentials"] }
 alloy-primitives = "1.6.0"
-async-channel = "2.5.0"
 borsh = { version = "1.6.1", features = ["derive"] }
-console_error_panic_hook = "0.1"
 futures = "0.3.32"
 gloo-net = { version = "0.5", features = ["websocket"] }
 gloo-timers = { version = "0.3", features = ["futures"] }

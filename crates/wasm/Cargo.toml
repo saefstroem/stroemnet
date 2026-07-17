@@ -14,6 +14,7 @@ stroemnet-handler = { path = "../handler" }
 stroemnet-p2p = { path = "../p2p" }
 
 ahash = { workspace = true, features = ["serde"] }
+parking_lot.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
@@ -28,8 +29,10 @@ alloy-primitives = { workspace = true }
 kaspa-addresses = { workspace = true }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
-console_error_panic_hook = { workspace = true }
 getrandom-03 = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = { workspace = true }
+
+[lints]
+workspace = true

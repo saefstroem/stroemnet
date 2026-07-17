@@ -23,6 +23,12 @@ pub fn default_gateway_config() -> Result<JsValue, JsError> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing
+    )]
     use super::*;
     use crate::StroemGateway;
     use wasm_bindgen_test::wasm_bindgen_test;

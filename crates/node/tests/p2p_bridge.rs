@@ -1,3 +1,10 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
+
 use stroemnet_p2p::wire::message::{P2pMsg, ProposalRequest};
 use stroemnet_p2p::wire::{decode, encode};
 use stroemnet_test_harness::test_handler;

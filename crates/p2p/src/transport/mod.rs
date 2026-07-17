@@ -5,6 +5,8 @@ mod web;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::WsTransport;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use native::ws_config;
 #[cfg(target_arch = "wasm32")]
 pub use web::WsTransport;
 

@@ -16,10 +16,4 @@ pub enum StroemnetP2pError {
 
     #[error("Handshake failed: {0}")]
     HandshakeFailed(String),
-
-    #[error("Url parse: {0}")]
-    UrlParse(#[from] url::ParseError),
-
-    #[error("Other: {0}")]
-    Other(String),
 }

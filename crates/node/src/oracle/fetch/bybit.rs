@@ -32,15 +32,12 @@ struct BybitTicker {
 }
 
 impl PriceFeed {
-    /// Fetches price data for the given channels from Bybit's API,
-    /// mapping our internal channel IDs to Bybit symbols.
     pub(super) async fn bybit(
         &self,
         channels: &[ChannelId],
     ) -> Result<Vec<(ChannelId, PriceSample)>> {
         let mut symbol_to_channels: AHashMap<&'static str, Vec<ChannelId>> = AHashMap::new();
 
-        // go over all channels and map them to bybit symbols
         for ch in channels {
             if let Some(sym) = Self::bybit_symbol(ch) {
                 symbol_to_channels.entry(sym).or_default().push(*ch);
@@ -53,14 +50,11 @@ impl PriceFeed {
             ));
         }
 
-        // Go over all the symbols that we need to fetch and fetch them
         let mut out = Vec::new();
         for (symbol, chs) in symbol_to_channels {
             match self.bybit_single(symbol).await {
                 Ok(sample) => {
                     for ch in chs {
-                        // Since there can be multiple channels mapping
-                        // to same symbol, for example both KaspaTn10 and IgraGalleon map to KASUSDT
                         out.push((ch, sample));
                     }
                 }
@@ -78,7 +72,6 @@ impl PriceFeed {
     }
 
     async fn bybit_single(&self, symbol: &str) -> Result<PriceSample> {
-        // Query bybit api
         let resp = self
             .client
             .get(format!("{}/v5/market/tickers", BYBIT_BASE_URL))
@@ -94,7 +87,6 @@ impl PriceFeed {
                 body.ret_code, symbol, body.ret_msg
             )));
         }
-        // Extract the price and volume from the rsesponse
         let ticker = body.result.list.first().ok_or_else(|| {
             OracleError::NoPriceData(format!("Bybit returned empty list for {}", symbol))
         })?;
@@ -105,7 +97,6 @@ impl PriceFeed {
                 symbol, price
             )));
         }
-        // Return data
         let volume_usd = ticker.turnover_24h.parse::<f64>().unwrap_or(0.0);
         Ok(PriceSample { price, volume_usd })
     }
@@ -121,6 +112,7 @@ impl PriceFeed {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::indexing_slicing)]
     use super::*;
 
     #[test]

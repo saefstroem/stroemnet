@@ -1,3 +1,10 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
+
 use std::time::Duration;
 
 use stroemnet_p2p::transport::{WsTransport, loopback_pair};

@@ -18,18 +18,18 @@ impl StroemGateway {
     #[wasm_bindgen(js_name = onQuote)]
     pub fn on_quote(&self, callback: QuoteCallback) {
         let f: js_sys::Function = callback.unchecked_into();
-        self.inner.callbacks.lock().unwrap().quote.push(f);
+        self.inner.callbacks.lock().quote.push(f);
     }
 
     #[wasm_bindgen(js_name = onSwapStatus)]
     pub fn on_swap_status(&self, callback: SwapStatusCallback) {
         let f: js_sys::Function = callback.unchecked_into();
-        self.inner.callbacks.lock().unwrap().swap_status.push(f);
+        self.inner.callbacks.lock().swap_status.push(f);
     }
 
     #[wasm_bindgen(js_name = onPeerCount)]
     pub fn on_peer_count(&self, callback: PeerCountCallback) {
         let f: js_sys::Function = callback.unchecked_into();
-        self.inner.callbacks.lock().unwrap().peer_count.push(f);
+        self.inner.callbacks.lock().peer_count.push(f);
     }
 }

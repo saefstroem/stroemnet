@@ -6,11 +6,9 @@ use stroemnet_protocol::ChannelId;
 
 use crate::{PeerDb, Result};
 
-/// The table definition for storing cursors in the database. Each cursor is associated with a specific channel.
 pub(crate) const CURSORS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("cursors");
 
 impl PeerDb {
-    /// Retrieves the cursor for the specified channel from the database.
     pub fn get_cursor(&self, channel: ChannelId) -> Result<Option<Vec<u8>>> {
         let read_txn = self.inner.begin_read()?;
         let table = read_txn.open_table(CURSORS)?;
@@ -21,7 +19,6 @@ impl PeerDb {
         }
     }
 
-    /// Sets the cursor for the specified channel in the database.
     pub fn set_cursor(&self, channel: ChannelId, cursor: &[u8]) -> Result<()> {
         let write_txn = self.inner.begin_write()?;
         {
@@ -58,6 +55,12 @@ impl CursorStore for DbCursorStore {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing
+    )]
     use super::*;
     use tempfile::tempdir;
 

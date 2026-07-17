@@ -4,10 +4,14 @@ use kaspa_txscript_errors::TxScriptError;
 use kaspa_wrpc_client::prelude::RpcBlock;
 use thiserror::Error;
 
-use super::contracts::contract_v1::DataType;
+use super::contracts::DataType;
 use crate::DataError;
 
 pub(super) type Result<T> = std::result::Result<T, KaspaError>;
+
+pub(super) fn script_err<E: std::fmt::Debug>(e: E) -> KaspaError {
+    KaspaError::ScriptBuilder(format!("{e:?}"))
+}
 
 #[derive(Error, Debug)]
 pub enum KaspaError {
@@ -38,9 +42,6 @@ pub enum KaspaError {
     #[error("Missing secret in signature script")]
     MissingSecret,
 
-    #[error("Missing signature in signature script")]
-    MissingSignature,
-
     #[error("Missing redeem script in signature script")]
     MissingRedeemScript,
 
@@ -53,9 +54,6 @@ pub enum KaspaError {
     #[error("Script builder error: {0}")]
     ScriptBuilder(String),
 
-    #[error("Failed to parse amount: {0}")]
-    AmountParse(String),
-
     #[error("Parse int error: {0}")]
     ParseInt(#[from] std::num::ParseIntError),
 
@@ -65,9 +63,6 @@ pub enum KaspaError {
     #[error("From utf8 error: {0}")]
     FromUtf8(#[from] std::string::FromUtf8Error),
 
-    #[error("Invalid sigmsg detail length: expected {expected}, got {got}")]
-    InvalidSigMsgDetailLength { expected: usize, got: usize },
-
     #[error("Kaspa Rpc Tx Error: {0}")]
     RpcTx(#[from] kaspa_wrpc_client::prelude::RpcError),
 
@@ -76,9 +71,6 @@ pub enum KaspaError {
 
     #[error("Safe block send error: {0}")]
     SafeBlockSend(#[from] tokio::sync::mpsc::error::SendError<Arc<RpcBlock>>),
-
-    #[error("Missing channel id for destination: {0:?}")]
-    MissingChannelId(stroemnet_protocol::ChannelId),
 
     #[error("Swap not found: {}", hex::encode(_0))]
     SwapNotFound([u8; 32]),

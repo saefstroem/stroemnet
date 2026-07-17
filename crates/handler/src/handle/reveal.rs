@@ -3,7 +3,7 @@ use crate::result::Result;
 use stroemnet_protocol::v1::RevealV1;
 
 impl Handler {
-    /// Handle an external reveal which is basically the fact that we mark it as revealed and store the secret
+    /// Handle an external reveal event which sets the swap to be revealed by the swap id
     pub async fn handle_external_reveal(&self, reveal: RevealV1) -> Result<()> {
         tracing::info!("Handling reveal: {:?}", reveal);
         let mut tracker_write = self.swap_tracker.write().await;
@@ -15,21 +15,18 @@ impl Handler {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing
+    )]
     use crate::test_fixtures::{
         create_test_handler, mock_counter_commitment_with_secret, mock_init_commitment_with_secret,
+        sha256,
     };
     use stroemnet_protocol::swap_tracker::SwapStage;
     use stroemnet_protocol::v1::RevealV1;
-
-    fn sha256(secret: &[u8; 32]) -> [u8; 32] {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(secret);
-        let out = hasher.finalize();
-        let mut a = [0u8; 32];
-        a.copy_from_slice(&out);
-        a
-    }
 
     #[tokio::test]
     async fn reveal_valid_lock_transitions_to_reveal() {

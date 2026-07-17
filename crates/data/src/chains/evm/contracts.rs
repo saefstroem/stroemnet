@@ -3,21 +3,19 @@ use alloy::sol;
 sol! {
     #[sol(rpc)]
     contract StroemHTLCV1 {
-        struct Swap {
-            address sender;
-            bytes sender_destination_address;
-            address receiver;
-            uint256 amount;
-            bytes32 secretHash;
-            uint256 timelock;
-            bool initialized;
-            bool finalized;
-        }
-
-        mapping(bytes32 => Swap) public swaps;
-        mapping(bytes32 => bool) public secretHashes;
-
-        uint256 public constant BPS_DENOMINATOR;
+        function swaps(bytes32 swapId)
+            external
+            view
+            returns (
+                address sender,
+                bytes sender_destination_address,
+                address receiver,
+                uint256 amount,
+                bytes32 secretHash,
+                uint256 timelock,
+                bool initialized,
+                bool finalized
+            );
 
         event Commitment(
             bytes32 indexed swapId,
@@ -53,5 +51,47 @@ sol! {
         function claim(bytes32 _swapId, bytes32 _secret) external;
 
         function refund(bytes32 _swapId) external;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing
+    )]
+    use super::StroemHTLCV1;
+    use alloy::primitives::{Address, B256, Bytes, U256};
+    use alloy::sol_types::{SolCall, SolValue};
+
+    #[test]
+    fn swaps_return_matches_eight_field_solidity_struct() {
+        let encoded = (
+            Address::repeat_byte(0x11),
+            Bytes::from(vec![0xAA, 0xBB, 0xCC]),
+            Address::repeat_byte(0x22),
+            U256::from(1000u64),
+            B256::repeat_byte(0x33),
+            U256::from(1_700_000_000u64),
+            true,
+            false,
+        )
+            .abi_encode_params();
+
+        let ret = StroemHTLCV1::swapsCall::abi_decode_returns(&encoded).unwrap();
+
+        assert_eq!(ret.sender, Address::repeat_byte(0x11));
+        assert_eq!(
+            ret.sender_destination_address,
+            Bytes::from(vec![0xAA, 0xBB, 0xCC])
+        );
+        assert_eq!(ret.receiver, Address::repeat_byte(0x22));
+        assert_eq!(ret.amount, U256::from(1000u64));
+        assert_eq!(ret.secretHash, B256::repeat_byte(0x33));
+        assert_eq!(ret.timelock, U256::from(1_700_000_000u64));
+        assert!(ret.initialized);
+        assert!(!ret.finalized);
     }
 }

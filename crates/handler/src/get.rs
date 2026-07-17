@@ -4,31 +4,28 @@ use stroemnet_protocol::ChannelId;
 use stroemnet_protocol::v1::CommitmentV1;
 
 impl Handler {
-    /// Get the counterparty channel id for a given swap and our channel.
-    /// This is used to know which channel to monitor for the counterparty commitment and reveal/refund events
+    /// Retrieves the channel id for the counterparty provided some existing channel id
     pub async fn get_counterparty_channel_id(
         &self,
         swap_id: &[u8; 32],
         our_channel: ChannelId,
     ) -> Result<Option<ChannelId>> {
         let tracker_read = self.swap_tracker.read().await;
-        // Try and retrieve the swap record for the given swap id. If it doesn't exist, return None
         if let Some(record) = tracker_read.get_swap(swap_id) {
+            // get the swap
+
+            // compute init source
             let init_source = ChannelId::try_from(record.init_commitment.source)?;
 
-            // If there is no counter commitment, we are in the state where only the init commitment has been observed.
-            if record.counter_commitment.is_none() {
-                // This means we can simply return the destination of the init commitment as the counterparty channel,
-                // since the init commitment is always sent by us and received by the counterparty
-                let init_dest = ChannelId::try_from(record.init_commitment.destination)?;
-                return Ok(Some(init_dest));
-            }
+            let Some(counter) = record.counter_commitment.as_ref() else {
+                // if there is no counter we will simply return none
+                return Ok(None);
+            };
 
-            // Otherwise simply compute the counter channel id by reading it from the source
-            // of the counter commitment
-            let counter_source =
-                ChannelId::try_from(record.counter_commitment.as_ref().unwrap().source)?;
+            // compute counter
+            let counter_source = ChannelId::try_from(counter.source)?;
 
+            // depending on what we passed as our channel we will get the other side
             if init_source == our_channel {
                 Ok(Some(counter_source))
             } else {
@@ -39,36 +36,38 @@ impl Handler {
         }
     }
 
-    /// Retrieve a commitment for a given swap id and channel
     pub async fn get_commitment_for_channel(
         &self,
         swap_id: &[u8; 32],
         channel: ChannelId,
     ) -> Result<Option<CommitmentV1>> {
         let tracker_read = self.swap_tracker.read().await;
-        // If we dont have this swap there is nothing to return
         let Some(record) = tracker_read.get_swap(swap_id) else {
             return Ok(None);
         };
 
-        // Check if the init commitment belongs to the given channel, if yes return it
         if ChannelId::try_from(record.init_commitment.source)? == channel {
             return Ok(Some(record.init_commitment.clone()));
         }
 
-        // Check if the counter commitment belongs to the given channel, if yes return it
         if let Some(counter) = record.counter_commitment.as_ref()
-            && ChannelId::try_from(counter.source)? == channel {
-                return Ok(Some(counter.clone()));
-            }
+            && ChannelId::try_from(counter.source)? == channel
+        {
+            return Ok(Some(counter.clone()));
+        }
 
-        // Otherwise we dont have it
         Ok(None)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing
+    )]
     use crate::test_fixtures::{
         TEST_SECRET, create_test_handler, mock_counter_commitment, mock_init_commitment,
     };
@@ -102,10 +101,9 @@ mod tests {
             .get_counterparty_channel_id(&swap_id, ChannelId::KaspaTn10)
             .await
             .unwrap();
-        assert_eq!(
-            result,
-            Some(ChannelId::KaspaTn10),
-            "InitLock should return its destination as the counterparty channel"
+        assert!(
+            result.is_none(),
+            "no counterparty channel until the counter commitment locks"
         );
     }
 

@@ -5,10 +5,10 @@ use alloy::providers::Provider;
 use alloy::signers::Signer;
 use alloy::signers::local::{LocalSignerError, PrivateKeySigner};
 
+use crate::chains::net::retry_timed;
 use crate::{DataError, ProposalVerification, Result};
 
-/// Derives the Ethereum address from the provided private key string
-/// Returns the address as a hex string or a DataError if parsing fails
+/// Convert private key to an address in string format
 pub(super) fn address_from_private_key(private_key: &str) -> Result<String> {
     let signer: PrivateKeySigner = private_key
         .parse()
@@ -16,8 +16,8 @@ pub(super) fn address_from_private_key(private_key: &str) -> Result<String> {
     Ok(format!("{}", signer.address()))
 }
 
-/// Verifies that the provided signature is valid for the given digest and claimed address
-/// Returns a tuple of the recovered address and whether it matches the claimed address
+/// Verify the signature of an LP (address)
+/// based on the provided message hash and signature
 pub(super) fn verify_lp_signature(
     digest: [u8; 32],
     claimed_address: &str,
@@ -33,42 +33,43 @@ pub(super) fn verify_lp_signature(
     Ok((format!("{recovered}"), recovered == claimed))
 }
 
-/// Queries the balance of the provided address using the given provider
-/// Returns the balance as a U256 or a DataError if the query fails
+/// Query the balance of an address
 pub(super) async fn query_balance<P: Provider>(provider: &P, address: &str) -> Result<U256> {
     let addr = Address::from_str(address.trim())
         .map_err(|e| DataError::Rpc(format!("invalid address {address}: {e}")))?;
-    provider
-        .get_balance(addr)
+    retry_timed("get_balance", || provider.get_balance(addr))
         .await
-        .map_err(|e| DataError::Rpc(format!("get_balance: {e}")))
+        .ok_or_else(|| DataError::Rpc("get_balance: timed out".into()))
 }
 
-/// Signs the provided digest with the given private key after
-/// verifying that the associated address has sufficient balance
+/// Sign a message with a private key and also
+/// ensure that the private key has enough balance to cover the minimum requirement
 pub(super) async fn sign_message<P: Provider>(
     provider: &P,
     private_key: &str,
     digest: [u8; 32],
     required_balance: U256,
 ) -> Result<(String, Vec<u8>)> {
-    // Compute the signer from the passed private ket
+    // Parse the signer
     let signer: PrivateKeySigner = private_key
         .parse()
         .map_err(|e: LocalSignerError| DataError::Sign(format!("local signer: {e}")))?;
 
-    // Get the address
     let address = signer.address();
 
-    // Query the balance from the provider
+    // Query the balance of the address
     let balance = query_balance(provider, &address.to_string()).await?;
+
+    // Having this check here ensures that is irrepresentable to provide a valid signature of a
+    // swap quote without having enough balance (assuming a valid an honest node)
+    // But the user will verify sig anyway so it doesnt really matter
     if balance < required_balance {
         return Err(DataError::Sign(format!(
             "insufficient balance at {address}: have {balance}, need {required_balance}"
         )));
     }
 
-    // Sign the digest
+    // Sign the message with the private key
     let signature = signer
         .sign_message(&digest)
         .await
@@ -76,9 +77,8 @@ pub(super) async fn sign_message<P: Provider>(
     Ok((format!("{address}"), signature.as_bytes().to_vec()))
 }
 
-/// Verify that a certain message came from a claimed address
-/// and that there is a certain amount of balance for the claimed address
-/// Used to prevent impersonation attacks
+/// Verify a message by ensuring that the signature corresponds to the claimed address
+/// and also that the claimed address has enough funds to cover the swap amount
 pub(super) async fn verify_message<P: Provider>(
     provider: &P,
     digest: [u8; 32],
@@ -86,14 +86,11 @@ pub(super) async fn verify_message<P: Provider>(
     signature_bytes: &[u8],
     required_balance: U256,
 ) -> Result<ProposalVerification> {
-    // Verify the LP signature first to recover the address and check if it matches the claimed address
     let (_signer_address, address_matches) =
         verify_lp_signature(digest, claimed_address, signature_bytes)?;
 
-    // Query the balance
     let balance = query_balance(provider, claimed_address).await?;
 
-    // Return the verification result of the proposal
     Ok(ProposalVerification {
         address_matches,
         balance_sufficient: balance >= required_balance,
@@ -102,6 +99,12 @@ pub(super) async fn verify_message<P: Provider>(
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing
+    )]
     use super::*;
 
     fn fixture_digest() -> [u8; 32] {
