@@ -6,6 +6,8 @@ use crate::wire::message::{NodeState, P2pMsg};
 use crate::wire::{decode, encode};
 
 impl ConnectedPeer {
+    /// Performs the inner handshake which creates a confirmed
+    /// connected and healthy peer connection
     pub async fn handshake(
         url: String,
         transport: WsTransport,
@@ -15,16 +17,20 @@ impl ConnectedPeer {
         let our_id = our_state.node_id;
         let our_listen = our_state.listen_addr.clone();
 
+        // Transmit the p2p state to the peer
         let send_fut = async {
             let bytes = encode(&P2pMsg::State(our_state))?;
             transport.send(bytes).await
         };
+        // Create closure to read from this peer
         let recv_fut = async {
             let bytes = transport.recv().await?;
             decode(&bytes)
         };
         let (send_res, recv_res) = futures::join!(send_fut, recv_fut);
         send_res?;
+
+        // We expect to receive a state from the peer too
         let peer_state = match recv_res? {
             P2pMsg::State(s) => s,
             other => {
@@ -33,8 +39,10 @@ impl ConnectedPeer {
                 )));
             }
         };
+        // Ensure that we are not trying to handshake ourselves
         Self::check_self_loop(&peer_state, our_id, our_listen.as_deref())?;
 
+        // Since we got here means we have valid state from peer
         let mut peer = ConnectedPeer::new(url.clone(), transport);
         peer.node_id = peer_state.node_id;
         peer.advertised_listen = if is_inbound {
@@ -45,6 +53,8 @@ impl ConnectedPeer {
         peer.connected_at = stroemnet_protocol::now_unix_secs();
         peer.is_inbound = is_inbound;
         peer.known_peers = peer_state.peers;
+
+        // Return the connected peer
         Ok(peer)
     }
 
@@ -59,27 +69,24 @@ impl ConnectedPeer {
             ));
         }
         if let (Some(ours), Some(theirs)) = (our_listen, peer.listen_addr.as_deref())
-            && Self::listen_addrs_equal(ours, theirs) {
-                tracing::warn!(
-                    "rejecting peer (node_id={}) advertising our own listen_addr {theirs} \
+            && crate::listen_addrs_equal(ours, theirs)
+        {
+            tracing::warn!(
+                "rejecting peer (node_id={}) advertising our own listen_addr {theirs} \
                      — likely a misconfigured EXTERNAL_HOSTNAME shared across multiple nodes",
-                    hex::encode(peer.node_id)
-                );
-                return Err(StroemnetP2pError::HandshakeFailed(format!(
-                    "peer advertises our listen_addr ({theirs})"
-                )));
-            }
+                hex::encode(peer.node_id)
+            );
+            return Err(StroemnetP2pError::HandshakeFailed(format!(
+                "peer advertises our listen_addr ({theirs})"
+            )));
+        }
         Ok(())
-    }
-
-    fn listen_addrs_equal(a: &str, b: &str) -> bool {
-        a.trim_end_matches('/')
-            .eq_ignore_ascii_case(b.trim_end_matches('/'))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
     use super::*;
     use crate::transport::loopback_pair;
 
@@ -180,17 +187,8 @@ mod tests {
 
     #[test]
     fn listen_addrs_equal_ignores_trailing_slash_and_case() {
-        assert!(ConnectedPeer::listen_addrs_equal(
-            "ws://x:3000",
-            "ws://x:3000/"
-        ));
-        assert!(ConnectedPeer::listen_addrs_equal(
-            "WS://X:3000/",
-            "ws://x:3000"
-        ));
-        assert!(!ConnectedPeer::listen_addrs_equal(
-            "ws://x:3000",
-            "ws://x:3001"
-        ));
+        assert!(crate::listen_addrs_equal("ws://x:3000", "ws://x:3000/"));
+        assert!(crate::listen_addrs_equal("WS://X:3000/", "ws://x:3000"));
+        assert!(!crate::listen_addrs_equal("ws://x:3000", "ws://x:3001"));
     }
 }

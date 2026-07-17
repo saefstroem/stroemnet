@@ -1,534 +1,120 @@
 mod broadcast;
+mod buffer;
+mod config;
+mod connect;
 mod contracts;
 mod decode;
+mod emit;
 mod finality;
+mod persist;
+mod poll;
+mod provider;
+#[cfg(not(target_arch = "wasm32"))]
+mod reconcile;
+#[cfg(not(target_arch = "wasm32"))]
+mod replace;
+#[cfg(not(target_arch = "wasm32"))]
+mod settle;
+#[cfg(not(target_arch = "wasm32"))]
+mod settler;
 mod signing;
 
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
-use alloy::primitives::{Address, U256};
-use alloy::providers::{DynProvider, Provider, ProviderBuilder};
-use alloy::signers::local::PrivateKeySigner;
+use alloy::primitives::Address;
+use alloy::providers::DynProvider;
 use serde::Deserialize;
-use serde_json::Value;
 use stroemnet_protocol::ChannelId;
-use stroemnet_protocol::now_unix_secs;
-use stroemnet_protocol::v1::{ChainEvent, RefundV1, RevealV1};
+use stroemnet_protocol::v1::{RefundV1, RevealV1};
 
-use crate::{BufFut, ChainDataBuffer, DataError, PersistedSwap, ProposalVerification, Result, SwapStore};
-use finality::{DEFAULT_MAX_BLOCKS_PER_POLL, DEFAULT_POLL_INTERVAL_MS, PollState};
-
+use crate::chains::settlement::{RetryQueue, SettlementMetrics};
+use crate::{CursorStore, DataError, Result, SwapStore};
+use finality::PollState;
 #[derive(Deserialize, Clone, Copy, Default, Debug)]
 #[serde(rename_all = "lowercase")]
+/// Gas variant. Some networks use legacy, not all are eip1559 compatible
 pub(crate) enum GasPayment {
     #[default]
     Eip1559,
     Legacy,
 }
 
-#[derive(Deserialize)]
-/// Configuration for the EVM chain data buffer
-struct EvmConfig {
-    /// The RPC URL of the EVM node to connect to
-    rpc_url: String,
-    /// The address of the HTLC contract to monitor and interact with
-    htlc_address: String,
-    #[serde(default)]
-    /// The number of block confirmations required before considering an event final
-    minimum_block_confirmations: u64,
-    #[serde(default = "default_poll_interval_ms")]
-    /// The interval in milliseconds between polling the chain for new events
-    poll_interval_ms: u64,
-    #[serde(default = "default_max_blocks_per_poll")]
-    /// The maximum number of blocks to query in each poll
-    max_blocks_per_poll: u64,
-    #[serde(default)]
-    /// Whether to participate in CCR by submitting claims
-    /// and refunds on the destination chain
-    participate_ccr: bool,
-    #[serde(default)]
-    gas_payment: GasPayment,
-}
-
-fn default_poll_interval_ms() -> u64 {
-    DEFAULT_POLL_INTERVAL_MS
-}
-
-fn default_max_blocks_per_poll() -> u64 {
-    DEFAULT_MAX_BLOCKS_PER_POLL
-}
-
-/// Loads the persisted state of pending refunds and claims 
-/// from the swap store for the given channel ID
-fn load_persisted_state(
-    swap_store: Option<&Arc<dyn SwapStore>>,
-    channel_id: ChannelId,
-) -> (Vec<(RefundV1, u64)>, Vec<RevealV1>) {
-    let mut pending_refunds = Vec::new();
-    let mut pending_claims = Vec::new();
-    let Some(store) = swap_store else {
-        return (pending_refunds, pending_claims);
-    };
-    for (swap_id, bytes) in store.load_channel(channel_id) {
-        match borsh::from_slice::<PersistedSwap>(&bytes) {
-            Ok(rec) => {
-                if let Some(pr) = rec.pending_refund {
-                    pending_refunds.push(pr);
-                }
-                if let Some(pc) = rec.pending_claim {
-                    pending_claims.push(pc);
-                }
-            }
-            Err(e) => tracing::warn!("EVM seed swap {}: {e}", hex::encode(swap_id)),
-        }
-    }
-    (pending_refunds, pending_claims)
-}
-
-/// The state of the evm from the perspective of polling
+/// The state of the EVM channel
 struct EvmState {
+    /// The current cursor of the evm channel
     poll: PollState,
+    /// Pending refunds that have the time for which they can be refunded
     pending_refunds: Vec<(RefundV1, u64)>,
+    /// Pending claims for already revealed secrets
     pending_claims: Vec<RevealV1>,
+    /// When is the next time for which we should poll the network
     next_poll_secs: u64,
+    /// Last safe block timestamp for evm network
     last_block_ts: Option<(u64, u64)>,
 }
 
-/// The main Evm struct that polls and emits confirmed data
+/// The general struct for the EVM channel
 pub(crate) struct Evm {
-    channel_id: ChannelId,                // the channel that it operates on
-    htlc_address: Address,                // the address of the htlc contract
-    minimum_block_confirmations: u64, // the number of confirmations required before considering an event final
-    poll_interval_secs: u64, // the interval in seconds between polling the chain for new events
-    max_blocks_per_poll: u64, // the maximum number of blocks to query in each poll
-    participate_ccr: bool,   // whether to participate in CCR
-    gas_payment: GasPayment, // how to price transactions (eip1559 default, or legacy)
-    private_key: Option<String>, // private key (only for LP)
-    read_provider: DynProvider, // provider for reading from the chain
-    signed_provider: Option<DynProvider>, // provider for signing and broadcasting transactions (only for LP)
-    state: Mutex<EvmState>, // the state of the evm buffer, including the poll state and pending refunds
-    cursor_store: Option<Arc<dyn crate::CursorStore>>, // optional cursor store for persisting the polling state (for native)
-    swap_store: Option<Arc<dyn crate::SwapStore>>,
+    /// Identifies which channel this is
+    /// todo: currently non-evm channels can be represented here
+    /// maybe channelids should be categorized to make invalid state
+    /// non-representable
+    channel_id: ChannelId,
+    /// Contract address of the htlc contract
+    htlc_address: Address,
+    /// Minimum number of block confirmations
+    minimum_block_confirmations: u64,
+    /// How often to poll from the network
+    poll_interval_secs: u64,
+    /// Maximum amount of blocks per poll
+    max_blocks_per_poll: u64,
+    /// Whether to participate in ccr
+    participate_ccr: bool,
+    /// Which variant of gas payment that we should do
+    gas_payment: GasPayment,
+    /// If this is an LP then we also utilize a private key
+    private_key: Option<String>,
+    /// A read provider used for read only operations
+    read_provider: DynProvider,
+    /// Signed providers for LP's and CCR nodes
+    signed_provider: Option<DynProvider>,
+    /// The state of the channel, tracking current state
+    state: Mutex<EvmState>,
+    /// trait backed cursor store to support both wasm and native impls
+    cursor_store: Option<Arc<dyn CursorStore>>,
+    /// trait backed cursor store to support both wasm and native impls
+    swap_store: Option<Arc<dyn SwapStore>>,
+    /// A queue for actions that have been executed by the settler, and also retry attempts
+    queue: RetryQueue,
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    /// Statistics about swaps in general
+    metrics: Arc<dyn SettlementMetrics>,
 }
 
-impl Evm {
-    /// Connects to the EVM chain using the provided configuration
-    /// and optional private key for signing transactions
-    /// Returns an instance of the EVM buffer ready to poll for
-    /// events and broadcast transactions
-    pub(crate) async fn connect(
-        channel_id: ChannelId,
-        cfg: &Value,
-        private_key: Option<String>,
-        cursor_store: Option<Arc<dyn crate::CursorStore>>,
-        swap_store: Option<Arc<dyn crate::SwapStore>>,
-    ) -> Result<Self> {
-        // Parse the configuration from the provided JSON value
-        let cfg: EvmConfig = serde_json::from_value(cfg.clone())
-            .map_err(|e| DataError::Config(format!("evm config: {e}")))?;
-
-        // Parse the HTLC contract address from the configuration
-        let htlc_address: Address = cfg
-            .htlc_address
-            .parse()
-            .map_err(|e| DataError::Config(format!("htlc_address: {e}")))?;
-
-        // Instantiate a provider for reading from the chain and another for signing transactions if a private key is provided
-        let read_provider = ProviderBuilder::new()
-            .connect(&cfg.rpc_url)
-            .await
-            .map_err(|e| DataError::Connect(format!("evm provider: {e}")))?
-            .erased();
-
-        // If a private key is provided, create a signed provider for broadcasting transactions
-        let signed_provider = match &private_key {
-            Some(pk) => {
-                let signer: PrivateKeySigner = pk
-                    .parse()
-                    .map_err(|e| DataError::Config(format!("private_key: {e}")))?;
-                Some(
-                    ProviderBuilder::new()
-                        .wallet(signer)
-                        .connect(&cfg.rpc_url)
-                        .await
-                        .map_err(|e| DataError::Connect(format!("evm signed provider: {e}")))?
-                        .erased(),
-                )
-            }
-            None => None,
-        };
-
-        // Calculate the initial cursor for polling based on the current chain head and the required number of confirmations
-        let head = read_provider
-            .get_block_number()
-            .await
-            .map_err(|e| DataError::Connect(format!("get_block_number: {e}")))?;
-
-        // If a cursor store is provided, attempt to load the last saved cursor for this channel
-        let cursor = match cursor_store
-            .as_ref()
-            .and_then(|s| s.load(channel_id))
-            .filter(|b| b.len() == 8)
-        {
-            // convert the cursor from bytes to u64
-            Some(bytes) => u64::from_le_bytes(bytes.try_into().unwrap()),
-            None => {
-                head // otherwise take the head-minimum_block_confirmations+1 as the starting cursor
-                    .saturating_sub(cfg.minimum_block_confirmations)
-                    .saturating_add(1)
-            }
-        };
-
-        tracing::info!(
-            "EVM buffer {channel_id} connected to {} — polling from block {cursor} (confirmations {}, ccr {})",
-            cfg.rpc_url,
-            cfg.minimum_block_confirmations,
-            cfg.participate_ccr,
-        );
-
-        let (pending_refunds, pending_claims) = load_persisted_state(swap_store.as_ref(), channel_id);
-        if !pending_refunds.is_empty() || !pending_claims.is_empty() {
-            tracing::info!(
-                "EVM buffer {channel_id} restored {} pending refund(s) and {} pending claim(s) from store",
-                pending_refunds.len(),
-                pending_claims.len(),
-            );
-        }
-
-        // Return a new instance of the EVM buffer with
-        // the initialized state and providers
-        Ok(Self {
-            channel_id,
-            htlc_address,
-            minimum_block_confirmations: cfg.minimum_block_confirmations,
-            poll_interval_secs: (cfg.poll_interval_ms / 1000).max(1),
-            max_blocks_per_poll: cfg.max_blocks_per_poll,
-            participate_ccr: cfg.participate_ccr,
-            gas_payment: cfg.gas_payment,
-            private_key,
-            read_provider,
-            signed_provider,
-            state: Mutex::new(EvmState {
-                poll: PollState { cursor },
-                pending_refunds,
-                pending_claims,
-                next_poll_secs: 0,
-                last_block_ts: None,
-            }),
-            cursor_store,
-            swap_store,
-        })
-    }
-
-    fn persist_swap(&self, swap_id: [u8; 32]) {
-        let Some(store) = &self.swap_store else {
-            return;
-        };
-        let record = {
-            let st = self.state.lock().unwrap();
-            crate::PersistedSwap {
-                commitment: None,
-                script: None,
-                pending_refund: st
-                    .pending_refunds
-                    .iter()
-                    .find(|(r, _)| r.swap_id == swap_id)
-                    .map(|(r, ts)| (r.clone(), *ts)),
-                pending_claim: st
-                    .pending_claims
-                    .iter()
-                    .find(|c| c.swap_id == swap_id)
-                    .cloned(),
-            }
-        };
-        if record.is_empty() {
-            store.delete(self.channel_id, swap_id);
-        } else {
-            match borsh::to_vec(&record) {
-                Ok(bytes) => store.save(self.channel_id, swap_id, &bytes),
-                Err(e) => tracing::warn!("EVM persist swap {} encode: {e}", hex::encode(swap_id)),
-            }
-        }
-    }
-
-    fn track_actionable_event(&self, event: &ChainEvent) {
-        let swap_id = match event {
-            ChainEvent::Commitment(c) => c.swap_id,
-            ChainEvent::Reveal(r) => r.swap_id,
-            ChainEvent::Refund(r) => r.swap_id,
-        };
-        {
-            let mut st = self.state.lock().unwrap();
-            super::queue_dequeue_refund_event(&mut st.pending_refunds, event, self.participate_ccr);
-            match event {
-                ChainEvent::Reveal(r) => st.pending_claims.retain(|c| c.swap_id != r.swap_id),
-                ChainEvent::Refund(r) => st.pending_claims.retain(|c| c.swap_id != r.swap_id),
-                ChainEvent::Commitment(_) => {}
-            }
-        }
-        self.persist_swap(swap_id);
-    }
-
-    /// Retrieve the signer provider
-    fn signed(&self) -> Result<&DynProvider> {
-        self.signed_provider
-            .as_ref()
-            .ok_or(DataError::MissingKey(self.channel_id))
-    }
-
-    /// Check if any pending refunds are ready to be submitted and submit them if so
-    /// This is used to automatically submit refunds for swaps that have passed
-    /// their unlock timestamp without a reveal
-    async fn run_refund_scheduler(&self) {
-        // If CCR participation is disabled or there is no signing provider,
-        // skip the refund scheduler
-        if !self.participate_ccr {
-            return;
-        }
-
-        // Retrieve the signed provider and return early if its not configured
-        let Some(signed) = self.signed_provider.as_ref() else {
-            return;
-        };
-
-        // Check if there are any pending refunds, and if not, skip the rest of the function
-        let has_pending = { !self.state.lock().unwrap().pending_refunds.is_empty() };
-        if !has_pending {
-            return;
-        }
-
-        // Retrieve the current block timestamp to use for checking which refunds
-        // are ready to be submitted.
-        let Some(block_ts) = broadcast::current_block_timestamp(&self.read_provider).await else {
-            return;
-        };
-
-        // Compute the ready swap ids
-        let ready: Vec<[u8; 32]> = {
-            let st = self.state.lock().unwrap();
-            // Collect the swap ids of all pending refunds whose unlock timestamp has passed
-            st.pending_refunds
-                .iter()
-                .filter(|(_, unlock_ts)| block_ts >= *unlock_ts)
-                .map(|(r, _)| r.swap_id)
-                .collect()
-        };
-
-        // Loop over each swap id and attempt to submit a refund transaction for it,
-        // logging any errors that occur
-        for swap_id in ready {
-            match broadcast::submit_refund(signed, self.htlc_address, swap_id, self.gas_payment).await
-            {
-                Ok(_) => {
-                    self.state
-                        .lock()
-                        .unwrap()
-                        .pending_refunds
-                        .retain(|(r, _)| r.swap_id != swap_id);
-                    self.persist_swap(swap_id);
-                }
-                Err(e) => {
-                    tracing::error!("EVM scheduled refund {}: {e}", hex::encode(swap_id));
-                }
-            }
-        }
-    }
-
-    async fn run_claim_scheduler(&self) {
-        if !self.participate_ccr {
-            return;
-        }
-        let Some(signed) = self.signed_provider.as_ref() else {
-            return;
-        };
-        let claims: Vec<RevealV1> = { self.state.lock().unwrap().pending_claims.clone() };
-        for reveal in claims {
-            match broadcast::submit_claim(signed, self.htlc_address, &reveal, self.gas_payment).await
-            {
-                Ok(()) => {
-                    self.state
-                        .lock()
-                        .unwrap()
-                        .pending_claims
-                        .retain(|c| c.swap_id != reveal.swap_id);
-                    self.persist_swap(reveal.swap_id);
-                }
-                Err(e) => {
-                    tracing::error!("EVM claim retry for {}: {e}", hex::encode(reveal.swap_id));
-                }
-            }
-        }
-    }
-}
-
-impl ChainDataBuffer for Evm {
-    /// Returns the LP address derived from the configured private key, or an error if no private key is configured
-    fn lp_address(&self) -> Result<String> {
-        let pk = self
-            .private_key
-            .as_deref()
-            .ok_or(DataError::MissingKey(self.channel_id))?;
-        signing::address_from_private_key(pk)
-    }
-
-    /// Finalizes a chunk by polling the chain for new events since the last cursor,
-    /// decoding them, and returning them as a vector of (ChannelId, ChainEvent) tuples
-    /// For ethereum this method is already reorg safe as we only poll blocks behind
-    /// the required confirmation threshold
-    fn finalized_chunk(&self) -> BufFut<'_, Vec<(ChannelId, ChainEvent)>> {
-        Box::pin(async move {
-            let now = now_unix_secs();
-            // Check if it's time to poll the chain for new events based on the configured polling interval
-            let mut poll = {
-                let mut st = self.state.lock().unwrap();
-                if now < st.next_poll_secs {
-                    None
-                } else {
-                    st.next_poll_secs = now + self.poll_interval_secs;
-                    Some(st.poll)
-                }
-            };
-
-            // Create a container for events
-            let mut events = Vec::new();
-
-            // If its time to poll, lets poll.
-            if let Some(poll) = poll.as_mut() {
-                // Pull all logs according to the pollstate
-                let logs = poll
-                    .poll_once(
-                        &self.read_provider,
-                        self.htlc_address,
-                        self.minimum_block_confirmations,
-                        self.max_blocks_per_poll,
-                    )
-                    .await;
-                {
-                    self.state.lock().unwrap().poll = *poll;
-                }
-
-                // If we have a cursor store, save the current cursor to it for persistence
-                if let Some(store) = &self.cursor_store {
-                    store.save(self.channel_id, &poll.cursor.to_le_bytes());
-                }
-
-                // For each log
-                for log in &logs {
-                    if let Some(event) = decode::decode_log(log, self.channel_id) {
-                        // If we could decode it as a chain event, we queue or dequeue any relevant refunds
-                        self.track_actionable_event(&event);
-                        // Push it as an event
-                        events.push((self.channel_id, event));
-                    }
-                }
-
-                if let Some(ts) = broadcast::current_block_timestamp(&self.read_provider).await {
-                    self.state.lock().unwrap().last_block_ts = Some((ts, now_unix_secs()));
-                }
-            }
-
-            // After processing the logs we run the refund scheduler to submit any refunds that are ready to be submitted
-            self.run_refund_scheduler().await;
-            self.run_claim_scheduler().await;
-            Ok(events)
-        })
-    }
-
-    fn chain_now(&self) -> Option<u64> {
-        let max_age = self.poll_interval_secs.saturating_mul(3).max(30);
-        let (ts, observed) = self.state.lock().unwrap().last_block_ts?;
-        if now_unix_secs().saturating_sub(observed) > max_age {
-            return None;
-        }
-        Some(ts)
-    }
-
-    /// Broadcasts an incoming event by routing it based on the type of chainevent
-    fn broadcast_event<'a>(&'a self, event: &'a ChainEvent) -> BufFut<'a, ()> {
-        Box::pin(async move {
-            match event {
-                ChainEvent::Commitment(c) => {
-                    broadcast::submit_commitment(self.signed()?, self.htlc_address, c, self.gas_payment).await
-                }
-                ChainEvent::Reveal(r) => {
-                    if self.participate_ccr {
-                        {
-                            let mut st = self.state.lock().unwrap();
-                            let queued = st.pending_claims.iter().any(|c| c.swap_id == r.swap_id);
-                            if !queued {
-                                st.pending_claims.push(r.clone());
-                            }
-                        }
-                        self.persist_swap(r.swap_id);
-                    }
-                    Ok(())
-                }
-                ChainEvent::Refund(r) => {
-                    if self.participate_ccr {
-                        // we only submit refunds if we participate in CCR
-                        broadcast::submit_refund(self.signed()?, self.htlc_address, r.swap_id, self.gas_payment).await
-                    } else {
-                        Ok(())
-                    }
-                }
-            }
-        })
-    }
-
-    /// Signs a message digest using the configured private key and returns the signature bytes
-    /// but also ensures that the signer has the required balance
-    fn sign_message<'a>(
-        &'a self,
-        digest: [u8; 32],
-        required_balance: &'a str,
-    ) -> BufFut<'a, (String, Vec<u8>)> {
-        Box::pin(async move {
-            let pk = self
-                .private_key
-                .as_deref()
-                .ok_or(DataError::MissingKey(self.channel_id))?;
-            let required = U256::from_str_radix(required_balance, 10)
-                .map_err(|e| DataError::Sign(format!("required_balance: {e}")))?;
-            signing::sign_message(&self.read_provider, pk, digest, required).await
-        })
-    }
-
-    /// Verifies a message signature by recovering the signer address and comparing it to the claimed address,
-    /// and also checks that the signer has the required balance
-    fn verify_message<'a>(
-        &'a self,
-        digest: [u8; 32],
-        claimed_address: &'a str,
-        signature: &'a [u8],
-        required_balance: &'a str,
-    ) -> BufFut<'a, ProposalVerification> {
-        Box::pin(async move {
-            let required = U256::from_str_radix(required_balance, 10)
-                .map_err(|e| DataError::Sign(format!("required_balance: {e}")))?;
-            // Verify the message signature and
-            // return whether the recovered address matches the claimed address, and whether the required balance is met
-            signing::verify_message(
-                &self.read_provider,
-                digest,
-                claimed_address,
-                signature,
-                required,
-            )
-            .await
-        })
-    }
+/// Function to parse a string EVM address into the alloy variant
+fn parse_address(label: &str, value: &str) -> Result<Address> {
+    value
+        .parse()
+        .map_err(|e| DataError::Broadcast(format!("{label} address {value}: {e}")))
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
     use super::*;
-    use crate::SwapStore;
+    use crate::chains::record::restore;
+    use crate::{ChainDataBuffer, SwapStore};
+    use alloy::providers::{Provider, ProviderBuilder};
     use std::collections::HashMap;
     use std::sync::Mutex as StdMutex;
+    use stroemnet_protocol::v1::ChainEvent;
+
+    type Rows = StdMutex<HashMap<(u8, [u8; 32]), Vec<u8>>>;
 
     #[derive(Default)]
     struct MemSwapStore {
-        rows: StdMutex<HashMap<(u8, [u8; 32]), Vec<u8>>>,
+        rows: Rows,
     }
 
     impl crate::SwapStore for MemSwapStore {
@@ -548,7 +134,10 @@ mod tests {
                 .insert((channel_id as u8, swap_id), record.to_vec());
         }
         fn delete(&self, channel_id: ChannelId, swap_id: [u8; 32]) {
-            self.rows.lock().unwrap().remove(&(channel_id as u8, swap_id));
+            self.rows
+                .lock()
+                .unwrap()
+                .remove(&(channel_id as u8, swap_id));
         }
     }
 
@@ -578,6 +167,8 @@ mod tests {
             }),
             cursor_store: None,
             swap_store,
+            queue: RetryQueue::default(),
+            metrics: crate::chains::settlement::or_noop(None),
         }
     }
 
@@ -586,18 +177,19 @@ mod tests {
         let store = Arc::new(MemSwapStore::default());
         let store_dyn: Arc<dyn crate::SwapStore> = store.clone();
         let evm = test_evm(Some(store_dyn)).await;
-        assert!(evm.state.lock().unwrap().pending_refunds.is_empty());
+        assert!(evm.state.lock().pending_refunds.is_empty());
 
         let reveal = RevealV1::new([5u8; 32], [6u8; 32]);
         evm.broadcast_event(&ChainEvent::Reveal(reveal.clone()))
             .await
             .unwrap();
 
-        assert_eq!(evm.state.lock().unwrap().pending_claims, vec![reveal.clone()]);
+        assert_eq!(evm.state.lock().pending_claims, vec![reveal.clone()]);
         let rows = store.load_channel(ChannelId::IgraGalleon);
         assert_eq!(rows.len(), 1);
-        let rec = borsh::from_slice::<crate::PersistedSwap>(&rows[0].1).unwrap();
-        assert_eq!(rec.pending_claim, Some(reveal));
+        let store_dyn: Arc<dyn crate::SwapStore> = store.clone();
+        let restored = restore(Some(&store_dyn), ChannelId::IgraGalleon);
+        assert_eq!(restored.pending_claims, vec![reveal]);
     }
 
     #[test]
@@ -605,20 +197,20 @@ mod tests {
         let store = Arc::new(MemSwapStore::default());
         let reveal = RevealV1::new([1u8; 32], [2u8; 32]);
         let rec = crate::PersistedSwap {
-            commitment: None,
             script: None,
             pending_refund: None,
             pending_claim: Some(reveal.clone()),
+            claim_attempt: None,
+            refund_attempt: None,
         };
         store.save(
             ChannelId::IgraGalleon,
             reveal.swap_id,
-            &borsh::to_vec(&rec).unwrap(),
+            &crate::chains::record::encode(&rec).unwrap(),
         );
         let store_dyn: Arc<dyn crate::SwapStore> = store;
-        let (pending_refunds, pending_claims) =
-            load_persisted_state(Some(&store_dyn), ChannelId::IgraGalleon);
-        assert!(pending_refunds.is_empty());
-        assert_eq!(pending_claims, vec![reveal]);
+        let restored = restore(Some(&store_dyn), ChannelId::IgraGalleon);
+        assert!(restored.pending_refunds.is_empty());
+        assert_eq!(restored.pending_claims, vec![reveal]);
     }
 }

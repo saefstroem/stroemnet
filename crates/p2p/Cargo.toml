@@ -24,8 +24,9 @@ tokio-tungstenite = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 gloo-net = { workspace = true }
-gloo-timers = { workspace = true }
-wasm-bindgen-futures = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
+
+[lints]
+workspace = true

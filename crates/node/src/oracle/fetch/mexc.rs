@@ -18,14 +18,11 @@ struct MexcTicker {
 }
 
 impl PriceFeed {
-    /// Fetches price data for the given channels from MEXC's API,
-    /// mapping our internal channel IDs to MEXC symbols.
     pub(super) async fn mexc(
         &self,
         channels: &[ChannelId],
     ) -> Result<Vec<(ChannelId, PriceSample)>> {
         let mut symbol_to_channels: AHashMap<&'static str, Vec<ChannelId>> = AHashMap::new();
-        // Goes over all channels  and maps them to mexc symbols
         for ch in channels {
             if let Some(sym) = Self::mexc_symbol(ch) {
                 symbol_to_channels.entry(sym).or_default().push(*ch);
@@ -39,13 +36,9 @@ impl PriceFeed {
         }
 
         let mut out = Vec::new();
-        // Go over all the symbols that we need to fetch and fetch them
         for (symbol, chs) in symbol_to_channels {
             match self.mexc_single(symbol).await {
                 Ok(sample) => {
-                    // For all channels that map to this symbol, add the sample to the output
-                    // Since there can be multiple channels mapping
-                    // to same symbol, for example both KaspaTn10 and IgraGalleon map to KASUSDT
                     for ch in chs {
                         out.push((ch, sample));
                     }
@@ -95,6 +88,7 @@ impl PriceFeed {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::indexing_slicing)]
     use super::*;
 
     #[test]

@@ -3,66 +3,113 @@ use std::sync::Arc;
 use ahash::{AHashMap, AHashSet};
 use parking_lot::RwLock;
 use stroemnet_protocol::ChannelId;
+use stroemnet_protocol::now_unix_secs;
+
+/// Maximum age of the price
+const DEFAULT_MAX_AGE_SECS: u64 = 300;
+
+/// Maximum price deviation from last measurement.
+const MAX_JUMP_RATIO: f64 = 0.5;
 
 #[derive(Debug, Clone)]
-/// Thread-safe storage for channel price information, allowing concurrent reads and writes.
-/// Used to store and retrieve the latest price for each channel.
-///
-/// This is used by LPs to track the latest price for each channel,
-/// which is needed to compute output amount for a swap.
+/// A price storage storing USD valued prices for any channels
+/// native token
 pub struct PriceStorage {
+    /// all the channels that we are calculating prices for
     channels: Arc<RwLock<AHashSet<ChannelId>>>,
-    prices: Arc<RwLock<AHashMap<ChannelId, f64>>>,
+    /// The prices themselves, we want to separate this
+    /// from the data so that we can zero out the data
+    /// if the prices are stale
+    prices: Arc<RwLock<AHashMap<ChannelId, (f64, u64)>>>,
+    max_age_secs: u64,
 }
 
 impl PriceStorage {
-    /// Creates a new PriceStorage with the given channels initialized to a price of 0.0.
+    /// Creates a new price storage with designated channels
     pub fn new(channels: Vec<ChannelId>) -> Self {
-        let channel_set = channels.iter().copied().collect::<AHashSet<ChannelId>>();
-        let prices = channels
-            .into_iter()
-            .map(|channel| (channel, 0.0))
-            .collect::<AHashMap<ChannelId, f64>>();
+        Self::with_max_age(channels, DEFAULT_MAX_AGE_SECS)
+    }
 
+    /// Create a new price storage with a specified time for which prices are valid for
+    pub fn with_max_age(channels: Vec<ChannelId>, max_age_secs: u64) -> Self {
+        let channel_set = channels.into_iter().collect::<AHashSet<ChannelId>>();
         Self {
             channels: Arc::new(RwLock::new(channel_set)),
-            prices: Arc::new(RwLock::new(prices)),
+            prices: Arc::new(RwLock::new(AHashMap::new())),
+            max_age_secs,
         }
     }
 
-    /// Retrieves the price for the given channel, if it exists.
+    /// Retrieve a price based on a given channel id
     pub fn get(&self, channel: &ChannelId) -> Option<f64> {
-        self.prices.read().get(channel).cloned()
+        let (price, ts) = *self.prices.read().get(channel)?;
+
+        // Ensure the price itself is valid and that its not too old
+        if price.is_finite()
+            && price > 0.0
+            && now_unix_secs().saturating_sub(ts) <= self.max_age_secs
+        {
+            Some(price)
+        } else {
+            // If its too old we return none
+            None
+        }
     }
 
-    /// Returns a list of all channels currently stored.
+    /// Get all the channels for which we are tracking prices for
     pub fn channels(&self) -> Vec<ChannelId> {
         self.channels.read().iter().copied().collect()
     }
 
-    /// Sets the price for the given channel.
+    /// Set the price of a channel
     pub fn set(&self, channel: ChannelId, price: f64) {
-        self.channels.write().insert(channel);
-        self.prices.write().insert(channel, price);
-    }
+        // Ensure the price that we are setting is valid and not lt 0
+        if !price.is_finite() || price <= 0.0 {
+            tracing::warn!("rejecting invalid price {price} for {channel:?}");
+            return;
+        }
 
-    /// Clears all stored prices.
-    pub fn clear(&self) {
-        self.prices.write().clear();
+        // We need to ensure that prices have not deviated too far from the last
+        // price. Before we can do that we need to ensure the last price itself
+        // was valid, and then we ensure that it does not exceed the max jump ratio
+        // to reduce the risk of oracle failures.
+        if let Some(last) = self.get(&channel)
+            && (price - last).abs() / last > MAX_JUMP_RATIO
+        {
+            tracing::warn!(
+                "rejecting price {price} for {channel:?}: exceeds {MAX_JUMP_RATIO} jump from {last}"
+            );
+            return;
+        }
+        // Now add the channel to the channels if it is the case that we actually
+        // did not track this before, this allows us to simply add new channels to the system
+        // if needed.
+        self.channels.write().insert(channel);
+
+        // Finally, update the price for this channel.
+        self.prices
+            .write()
+            .insert(channel, (price, now_unix_secs()));
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing
+    )]
     use super::*;
     use std::thread;
 
     #[test]
-    fn test_new_storage_initializes_with_zero_prices() {
+    fn test_new_storage_has_no_price_until_set() {
         let channels = vec![ChannelId::KaspaTn10, ChannelId::EthereumSepolia];
         let storage = PriceStorage::new(channels.clone());
         for channel in channels {
-            assert_eq!(storage.get(&channel), Some(0.0));
+            assert_eq!(storage.get(&channel), None);
         }
     }
 
@@ -75,7 +122,7 @@ mod tests {
     #[test]
     fn test_new_storage_with_single_channel() {
         let storage = PriceStorage::new(vec![ChannelId::KaspaTn10]);
-        assert_eq!(storage.get(&ChannelId::KaspaTn10), Some(0.0));
+        assert_eq!(storage.get(&ChannelId::KaspaTn10), None);
         let stored = storage.channels();
         assert_eq!(stored.len(), 1);
         assert!(stored.contains(&ChannelId::KaspaTn10));
@@ -98,9 +145,19 @@ mod tests {
     fn test_get_returns_most_recent_value() {
         let storage = PriceStorage::new(vec![ChannelId::EthereumSepolia]);
         storage.set(ChannelId::EthereumSepolia, 1000.0);
-        storage.set(ChannelId::EthereumSepolia, 2000.0);
-        storage.set(ChannelId::EthereumSepolia, 3000.0);
-        assert_eq!(storage.get(&ChannelId::EthereumSepolia), Some(3000.0));
+        storage.set(ChannelId::EthereumSepolia, 1100.0);
+        storage.set(ChannelId::EthereumSepolia, 1200.0);
+        assert_eq!(storage.get(&ChannelId::EthereumSepolia), Some(1200.0));
+    }
+
+    #[test]
+    fn test_circuit_breaker_rejects_large_jump() {
+        let storage = PriceStorage::new(vec![ChannelId::KaspaTn10]);
+        storage.set(ChannelId::KaspaTn10, 0.15);
+        storage.set(ChannelId::KaspaTn10, 0.30);
+        assert_eq!(storage.get(&ChannelId::KaspaTn10), Some(0.15));
+        storage.set(ChannelId::KaspaTn10, 0.16);
+        assert_eq!(storage.get(&ChannelId::KaspaTn10), Some(0.16));
     }
 
     #[test]
@@ -118,17 +175,17 @@ mod tests {
     }
 
     #[test]
-    fn test_set_with_zero_price() {
+    fn test_set_with_zero_price_is_rejected() {
         let storage = PriceStorage::new(vec![ChannelId::KaspaTn10]);
         storage.set(ChannelId::KaspaTn10, 0.0);
-        assert_eq!(storage.get(&ChannelId::KaspaTn10), Some(0.0));
+        assert_eq!(storage.get(&ChannelId::KaspaTn10), None);
     }
 
     #[test]
-    fn test_set_with_negative_price() {
+    fn test_set_with_negative_price_is_rejected() {
         let storage = PriceStorage::new(vec![ChannelId::KaspaTn10]);
         storage.set(ChannelId::KaspaTn10, -100.0);
-        assert_eq!(storage.get(&ChannelId::KaspaTn10), Some(-100.0));
+        assert_eq!(storage.get(&ChannelId::KaspaTn10), None);
     }
 
     #[test]
@@ -259,33 +316,39 @@ mod tests {
     }
 
     #[test]
-    fn test_special_float_values() {
+    fn test_special_float_values_are_rejected() {
         let storage = PriceStorage::new(vec![ChannelId::KaspaTn10, ChannelId::EthereumSepolia]);
         storage.set(ChannelId::KaspaTn10, f64::INFINITY);
-        assert_eq!(storage.get(&ChannelId::KaspaTn10), Some(f64::INFINITY));
+        assert_eq!(storage.get(&ChannelId::KaspaTn10), None);
         storage.set(ChannelId::EthereumSepolia, f64::NEG_INFINITY);
-        assert_eq!(
-            storage.get(&ChannelId::EthereumSepolia),
-            Some(f64::NEG_INFINITY)
-        );
+        assert_eq!(storage.get(&ChannelId::EthereumSepolia), None);
     }
 
     #[test]
-    fn test_nan_handling() {
+    fn test_nan_is_rejected() {
         let storage = PriceStorage::new(vec![ChannelId::KaspaTn10]);
         storage.set(ChannelId::KaspaTn10, f64::NAN);
-        let p = storage.get(&ChannelId::KaspaTn10);
-        assert!(p.is_some());
-        assert!(p.unwrap().is_nan());
+        assert_eq!(storage.get(&ChannelId::KaspaTn10), None);
     }
 
     #[test]
-    fn test_rapid_sequential_updates() {
+    fn test_stale_price_reads_as_missing() {
+        let storage = PriceStorage::with_max_age(vec![ChannelId::KaspaTn10], 0);
+        storage.set(ChannelId::KaspaTn10, 0.15);
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        assert_eq!(storage.get(&ChannelId::KaspaTn10), None);
+    }
+
+    #[test]
+    fn test_rapid_sequential_updates_within_band() {
         let storage = PriceStorage::new(vec![ChannelId::KaspaTn10]);
-        for i in 0..1000 {
-            storage.set(ChannelId::KaspaTn10, i as f64);
+        let mut p = 1.0;
+        storage.set(ChannelId::KaspaTn10, p);
+        for _ in 0..1000 {
+            p *= 1.1;
+            storage.set(ChannelId::KaspaTn10, p);
         }
-        assert_eq!(storage.get(&ChannelId::KaspaTn10), Some(999.0));
+        assert_eq!(storage.get(&ChannelId::KaspaTn10), Some(p));
     }
 
     #[test]
@@ -313,10 +376,10 @@ mod tests {
             let _ = storage.get(c);
         }
         for c in &channels {
-            storage.set(*c, 200.0);
+            storage.set(*c, 120.0);
         }
         for c in &channels {
-            assert_eq!(storage.get(c), Some(200.0));
+            assert_eq!(storage.get(c), Some(120.0));
         }
     }
 
@@ -329,25 +392,5 @@ mod tests {
         assert_eq!(storage.get(&ChannelId::KaspaTn10), Some(0.15));
         assert_eq!(storage.get(&ChannelId::EthereumSepolia), Some(3000.0));
         assert_eq!(storage.channels().len(), all.len());
-    }
-
-    #[test]
-    fn test_clear_removes_prices_but_keeps_channels() {
-        let storage = PriceStorage::new(vec![ChannelId::KaspaTn10, ChannelId::EthereumSepolia]);
-        storage.set(ChannelId::KaspaTn10, 0.15);
-        storage.set(ChannelId::EthereumSepolia, 3000.0);
-        storage.clear();
-        assert_eq!(storage.get(&ChannelId::KaspaTn10), None);
-        assert_eq!(storage.get(&ChannelId::EthereumSepolia), None);
-        assert_eq!(storage.channels().len(), 2);
-        assert!(storage.channels().contains(&ChannelId::KaspaTn10));
-        assert!(storage.channels().contains(&ChannelId::EthereumSepolia));
-    }
-
-    #[test]
-    fn test_clear_empty_storage_is_noop() {
-        let storage = PriceStorage::new(vec![]);
-        storage.clear();
-        assert!(storage.channels().is_empty());
     }
 }

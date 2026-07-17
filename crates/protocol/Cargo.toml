@@ -21,3 +21,6 @@ gloo-timers = { workspace = true }
 getrandom-03 = { workspace = true }
 js-sys = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
+
+[lints]
+workspace = true

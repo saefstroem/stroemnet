@@ -3,9 +3,6 @@ use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(js_name = defaultObserverChannels)]
-/// Returns the default channel configurations for an observer client as a JSON object.
-/// If you do not have any special configurations, for your stroemnet client, then you can use
-/// this method to quickly connect to the stroemnet network.
 pub fn default_observer_channels() -> Result<JsValue, JsError> {
     default_observer_channels_json()
         .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
@@ -16,7 +13,7 @@ pub fn default_observer_channels_json() -> serde_json::Value {
     serde_json::json!({
         "ethereum-sepolia": {
             "rpc_url": "https://eth-sepolia.api.onfinality.io/public",
-            "htlc_address": "0x3AB5f1089f521D982ad67193E8523eB2fD34Da53",
+            "htlc_address": "0xb249849CAc76bcd86A566016AcA5e7FC63dA5122",
             "minimum_block_confirmations": 1u64,
         },
         "igra-galleon": {

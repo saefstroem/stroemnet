@@ -1,5 +1,9 @@
 # stroemnet
 
+> ⚠️ **UNAUDITED — COMPLETELY EXPERIMENTAL. DO NOT USE IN PRODUCTION.**
+> This code has not been security-audited and is under active development. It may
+> contain bugs that lead to loss of funds. Use at your own risk on testnets only.
+
 A trustless cross-chain atomic swap protocol.
 
 ## Roles
@@ -53,7 +57,7 @@ lp = true
 [channels.ethereum-sepolia]
 private_key = "0x<sepolia-key>"
 rpc_url = "https://eth-sepolia.api.onfinality.io/public"
-htlc_address = "0x3AB5f1089f521D982ad67193E8523eB2fD34Da53"
+htlc_address = "0xb249849CAc76bcd86A566016AcA5e7FC63dA5122"
 
 [channels.kaspa-tn10]
 private_key = "<kaspa-key-hex>"
@@ -85,7 +89,7 @@ lp = false
 participate_ccr = true
 private_key = "0x<sepolia-key>"   # needed to broadcast settlement txs
 rpc_url = "https://eth-sepolia.api.onfinality.io/public"
-htlc_address = "0x3AB5f1089f521D982ad67193E8523eB2fD34Da53"
+htlc_address = "0xb249849CAc76bcd86A566016AcA5e7FC63dA5122"
 
 [channels.kaspa-tn10]
 participate_ccr = false
@@ -127,7 +131,7 @@ min_confirmations = 30 # optional — finality threshold
 private_key = "0x<sepolia-key>" # required when lp = true; optional for observers
 participate_ccr = true # optional, default false
 rpc_url = "https://eth-sepolia.api.onfinality.io/public" # required for EVM channels
-htlc_address = "0x3AB5f1089f521D982ad67193E8523eB2fD34Da53" # required for EVM channels
+htlc_address = "0xb249849CAc76bcd86A566016AcA5e7FC63dA5122" # required for EVM channels
 min_confirmations = 1 # optional — finality threshold
 
 [channels.igra-galleon]

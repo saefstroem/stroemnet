@@ -3,11 +3,6 @@ use std::str::FromStr;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(js_name = validateEthAddress)]
-/// Validates an EVM address string.
-/// It accepts both checksummed and non-checksummed addresses,
-/// but if the address contains uppercase letters,
-/// it must be correctly checksummed according to EIP-55.
-/// Returns an error if the address is malformed or has an invalid checksum.
 pub fn validate_eth_address(input: &str) -> Result<(), JsError> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -28,10 +23,6 @@ pub fn validate_eth_address(input: &str) -> Result<(), JsError> {
 }
 
 #[wasm_bindgen(js_name = validateKasAddress)]
-/// Validates a Kaspa address string.
-/// It checks that the address is well-formed and that it belongs to the expected network based on the provided network ID.
-/// The network ID can be: `mainnet`, `testnet`, `simnet`, or `devnet`.
-/// Returns an error if the address is malformed or if it belongs to a different network than expected.
 pub fn validate_kas_address(input: &str, network_id: &str) -> Result<(), JsError> {
     use kaspa_addresses::{Address as KasAddress, Prefix};
     let trimmed = input.trim();

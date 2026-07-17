@@ -10,13 +10,11 @@ pub struct ConnectedPeer {
     pub url: String,
     pub transport: WsTransport,
     pub node_id: [u8; 32],
-
+    /// A wasm node does not have a listening address
+    /// hence this is optional
     pub advertised_listen: Option<String>,
-
     pub connected_at: u64,
-
     pub is_inbound: bool,
-
     pub known_peers: Vec<PeerAddr>,
 }
 

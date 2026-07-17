@@ -5,7 +5,6 @@ use alloy::{
 use thiserror::Error;
 
 use stroemnet_protocol::ChannelId;
-use stroemnet_protocol::v1::ChainEvent;
 
 #[derive(Error, Debug)]
 pub enum HandlerError {
@@ -56,9 +55,6 @@ pub enum HandlerError {
     #[error("System time error: {0}")]
     SystemTime(#[from] std::time::SystemTimeError),
 
-    #[error("Invalid price data: {0}")]
-    InvalidPriceData(f64),
-
     #[error("Invalid amount: {0}")]
     InvalidAmount(U256),
 
@@ -74,12 +70,6 @@ pub enum HandlerError {
     #[error("Unknown channel: {0:?}")]
     UnknownChannel(ChannelId),
 
-    #[error("Send error event to channel: {0:?}")]
-    SendEventToChannel(#[from] tokio::sync::mpsc::error::SendError<ChainEvent>),
-
-    #[error("Recv error from channel: {0:?}")]
-    RecvFromChannel(#[from] tokio::sync::oneshot::error::RecvError),
-
     #[error("Other error: {0}")]
     Other(String),
 }
@@ -87,5 +77,48 @@ pub enum HandlerError {
 impl From<String> for HandlerError {
     fn from(s: String) -> Self {
         HandlerError::Other(s)
+    }
+}
+
+impl HandlerError {
+    pub fn rejection_reason(&self) -> Option<String> {
+        match self {
+            HandlerError::TradeTooSmall { .. } | HandlerError::TradeTooLarge { .. } => {
+                Some(self.to_string())
+            }
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing
+    )]
+    use super::*;
+
+    #[test]
+    fn only_limit_errors_are_user_facing_rejections() {
+        let small = HandlerError::TradeTooSmall {
+            amount_in: "1".into(),
+            amount_in_usd: 0.5,
+            min_usd: 1.0,
+        };
+        let large = HandlerError::TradeTooLarge {
+            amount_in: "9".into(),
+            amount_in_usd: 200.0,
+            max_usd: 100.0,
+        };
+        assert!(small.rejection_reason().unwrap().contains("below minimum"));
+        assert!(large.rejection_reason().unwrap().contains("above maximum"));
+        assert!(
+            HandlerError::SwapNotFound([0; 32])
+                .rejection_reason()
+                .is_none()
+        );
     }
 }

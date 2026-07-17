@@ -22,9 +22,10 @@ pub fn decode(bytes: &[u8]) -> Result<P2pMsg> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
     use super::*;
     use crate::wire::message::{
-        NodeState, PeerAddr, ProposalRequest, ProposalResponse, ScriptAnnounce,
+        NodeState, PeerAddr, ProposalError, ProposalRequest, ProposalResponse, ScriptAnnounce,
     };
     use stroemnet_protocol::v1::RevealV1;
 
@@ -78,6 +79,16 @@ mod tests {
     #[test]
     fn reveal_roundtrip() {
         rt(P2pMsg::Reveal(RevealV1::new([3; 32], [4; 32])));
+    }
+
+    #[test]
+    fn proposal_error_roundtrip() {
+        rt(P2pMsg::ProposalError(ProposalError {
+            swap_id: [9; 32],
+            origin: 1,
+            destination: 0,
+            reason: "Trade amount 1 USD value 0.5 is below minimum of 1 USD".into(),
+        }));
     }
 
     #[test]

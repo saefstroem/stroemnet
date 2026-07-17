@@ -17,8 +17,6 @@ use borsh::{BorshDeserialize, BorshSerialize};
     serde::Serialize,
     serde::Deserialize,
 )]
-/// An enum containing all the different channels that are currently supported in Stroemnet
-/// No differentiation is made between mainnet/testnet channels.
 pub enum ChannelId {
     KaspaTn10,
     EthereumSepolia,
@@ -26,7 +24,6 @@ pub enum ChannelId {
 }
 
 impl ChannelId {
-    /// Returns the number of decimals used by the channel's native token.
     pub fn decimals(&self) -> u8 {
         match self {
             ChannelId::KaspaTn10 => 8,
@@ -34,8 +31,7 @@ impl ChannelId {
         }
     }
 
-    /// Returns the estimated finality time in seconds for the channel.
-    pub fn finality_secs(&self) -> u64 {
+    pub fn lock_time_secs(&self) -> u64 {
         match self {
             ChannelId::KaspaTn10 => 180,
             ChannelId::EthereumSepolia => 15 * 60,
@@ -47,7 +43,6 @@ impl ChannelId {
         matches!(self, ChannelId::IgraGalleon)
     }
 
-    /// Returns the ticker symbol for the channel's native token.
     pub fn ticker_symbol(&self) -> &'static str {
         match self {
             ChannelId::KaspaTn10 => "KAS",
@@ -56,7 +51,6 @@ impl ChannelId {
         }
     }
 
-    /// Returns true if the channel is based on the Ethereum Virtual Machine (EVM).
     pub fn is_evm(self) -> bool {
         match self {
             ChannelId::EthereumSepolia | ChannelId::IgraGalleon => true,
@@ -64,22 +58,10 @@ impl ChannelId {
         }
     }
 
-    /// Returns true if the channel is based on the UTXO model.
     pub fn is_utxo(self) -> bool {
         match self {
             ChannelId::KaspaTn10 => true,
             ChannelId::EthereumSepolia | ChannelId::IgraGalleon => false,
-        }
-    }
-
-    /// Returns a URL to a block explorer for the given transaction hash on this channel.
-    pub fn explorer_url(self, tx: &str) -> String {
-        match self {
-            ChannelId::EthereumSepolia => format!("https://sepolia.etherscan.io/tx/{tx}"),
-            ChannelId::KaspaTn10 => format!("https://explorer-tn10.kaspa.org/txs/{tx}"),
-            ChannelId::IgraGalleon => {
-                format!("https://explorer.galleon-testnet.igralabs.com/tx/{tx}")
-            }
         }
     }
 }
@@ -123,6 +105,12 @@ impl TryFrom<&str> for ChannelId {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing
+    )]
     use super::*;
 
     #[test]
@@ -168,11 +156,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_channel_id_finality_secs() {
-        assert_eq!(ChannelId::KaspaTn10.finality_secs(), 180);
-        assert_eq!(ChannelId::EthereumSepolia.finality_secs(), 900);
-    }
 
     #[test]
     fn test_is_evm_partition() {
@@ -184,16 +167,5 @@ mod tests {
     fn test_is_utxo_partition() {
         assert!(ChannelId::KaspaTn10.is_utxo());
         assert!(!ChannelId::EthereumSepolia.is_utxo());
-    }
-
-    #[test]
-    fn test_explorer_url_per_chain() {
-        let eth = ChannelId::EthereumSepolia.explorer_url("0xabc");
-        assert!(eth.contains("etherscan"));
-        assert!(eth.contains("0xabc"));
-
-        let kas = ChannelId::KaspaTn10.explorer_url("deadbeef");
-        assert!(kas.contains("kaspa"));
-        assert!(kas.contains("deadbeef"));
     }
 }

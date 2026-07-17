@@ -5,12 +5,6 @@ use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(js_name = getPrices)]
-/// Fetches current USD prices for the supported channels from the price oracle.
-/// In the browser this resolves against Bybit (the only CORS-enabled source);
-/// native nodes aggregate across Bybit, Gate.io and MEXC.
-///
-/// Returns a plain object keyed by channel id as a string
-/// (`"0"` = Kaspa, `"1"` = Ethereum, `"2"` = Igra) mapping to the USD price.
 pub async fn get_prices() -> Result<JsValue, JsError> {
     let feed = PriceFeed::with_default_client();
     let channels = vec![

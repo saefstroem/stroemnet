@@ -8,9 +8,6 @@ use crate::StroemGateway;
 #[wasm_bindgen]
 impl StroemGateway {
     #[wasm_bindgen(js_name = requestQuote)]
-    /// Requests a quote for a potential swap with the given parameters.
-    /// The quote details will be returned asynchronously via the `quote` event listener.
-    /// Therefore you should first add a listener for the `quote` event, and then call this function to request a quote.
     pub async fn request_quote(
         &self,
         swap_id: Vec<u8>,
@@ -30,14 +27,6 @@ impl StroemGateway {
     }
 
     #[wasm_bindgen(js_name = registerCommitment)]
-    /// Registers a commitment and its matching secret with the local node so the node
-    /// can complete the swap once the on-chain deposit is made, and returns the
-    /// source-chain deposit target.
-    ///
-    /// This does NOT submit anything on-chain: the commitment is built from a `quote`
-    /// event, registered here together with the secret that matches its secret hash,
-    /// and the actual deposit is performed separately by the caller (an EVM HTLC
-    /// transaction, or a transfer to the returned Kaspa P2SH address).
     pub async fn register_commitment(
         &self,
         commitment: JsValue,

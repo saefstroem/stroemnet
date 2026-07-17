@@ -18,9 +18,9 @@ stroemnet-handler = { path = "../handler" }
 stroemnet-p2p = { path = "../p2p" }
 stroemnet-protocol = { path = "../protocol" }
 ahash = { workspace = true }
+parking_lot.workspace = true
 futures = { workspace = true }
 hex = { workspace = true }
-rand = "0.10.1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
@@ -47,12 +47,10 @@ wasm-bindgen = { workspace = true }
 tsify-next = { workspace = true }
 getrandom-02 = { workspace = true }
 getrandom-04 = { workspace = true }
-gloo-timers = { workspace = true }
 reqwest = { workspace = true }
 
 [dev-dependencies]
 stroemnet-test-harness = { path = "../test-harness" }
-tempfile = { workspace = true }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-alloy = { workspace = true, features = ["node-bindings"] }
+[lints]
+workspace = true

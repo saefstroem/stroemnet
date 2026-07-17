@@ -6,6 +6,7 @@ pub struct Identity {
 }
 
 impl Identity {
+    #[allow(clippy::expect_used)]
     pub fn generate() -> Self {
         let mut id = [0u8; 32];
         getrandom_03::fill(&mut id).expect("OS RNG unavailable while generating peer identity");

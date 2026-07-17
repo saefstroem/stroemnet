@@ -5,47 +5,29 @@ use stroemnet_node::Node;
 use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::*;
 
-use crate::gateway::inner::Inner;
+use crate::gateway::inner::{EventCallbacks, Inner};
 const PEER_COUNT_POLL_MS: u64 = 500;
 
-fn spawn_quote_drain(inner: Arc<Inner>) {
-    let Some(mut rx) = inner.quote_rx.lock().unwrap().take() else {
+fn spawn_drain<T: Serialize + 'static>(
+    rx: Option<tokio::sync::mpsc::UnboundedReceiver<T>>,
+    callbacks: Arc<parking_lot::Mutex<EventCallbacks>>,
+    select: impl Fn(&EventCallbacks) -> Vec<js_sys::Function> + 'static,
+    label: &'static str,
+) {
+    let Some(mut rx) = rx else {
         return;
     };
-    let callbacks = inner.callbacks.clone();
     stroemnet_protocol::spawn(async move {
-        while let Some(row) = rx.recv().await {
-            let js_value = match row.serialize(&serde_wasm_bindgen::Serializer::json_compatible()) {
+        while let Some(item) = rx.recv().await {
+            let js_value = match item.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+            {
                 Ok(v) => v,
                 Err(e) => {
-                    tracing::warn!("serialize CheckedQuote: {e}");
+                    tracing::warn!("serialize {label}: {e}");
                     continue;
                 }
             };
-            let listeners: Vec<js_sys::Function> = callbacks.lock().unwrap().quote.clone();
-            for f in listeners {
-                let _ = f.call1(&JsValue::NULL, &js_value);
-            }
-        }
-    });
-}
-
-fn spawn_swap_status_drain(inner: Arc<Inner>) {
-    let Some(mut rx) = inner.swap_status_rx.lock().unwrap().take() else {
-        return;
-    };
-    let callbacks = inner.callbacks.clone();
-    stroemnet_protocol::spawn(async move {
-        while let Some(update) = rx.recv().await {
-            let js_value =
-                match update.serialize(&serde_wasm_bindgen::Serializer::json_compatible()) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        tracing::warn!("serialize SwapStatusUpdate: {e}");
-                        continue;
-                    }
-                };
-            let listeners: Vec<js_sys::Function> = callbacks.lock().unwrap().swap_status.clone();
+            let listeners: Vec<js_sys::Function> = select(&callbacks.lock());
             for f in listeners {
                 let _ = f.call1(&JsValue::NULL, &js_value);
             }
@@ -62,7 +44,7 @@ fn spawn_peer_count_poll(inner: Arc<Inner>, node: Arc<Node>) {
             if last != Some(current) {
                 last = Some(current);
                 let js_value = JsValue::from_f64(current as f64);
-                let listeners: Vec<js_sys::Function> = callbacks.lock().unwrap().peer_count.clone();
+                let listeners: Vec<js_sys::Function> = callbacks.lock().peer_count.clone();
                 for f in listeners {
                     let _ = f.call1(&JsValue::NULL, &js_value);
                 }
@@ -74,13 +56,6 @@ fn spawn_peer_count_poll(inner: Arc<Inner>, node: Arc<Node>) {
 #[wasm_bindgen]
 impl StroemGateway {
     #[wasm_bindgen]
-    /// Connects the gateway to the stroemnet network using the provided configuration.
-    ///
-    /// Errors with:
-    /// - `gateway already connected` if the gateway is already connected.
-    /// - `gateway already consumed` if the gateway was connected and then disconnected (not currently
-    /// - `Node::start: {e}` if the underlying node failed to start for some reason (e.g. invalid config).
-    /// - `node already set` if the node was somehow set by another concurrent call to connect (should be impossible).
     pub async fn connect(&self) -> Result<(), JsError> {
         if self.inner.node.get().is_some() {
             return Err(JsError::new("gateway already connected"));
@@ -89,7 +64,6 @@ impl StroemGateway {
             .inner
             .config
             .lock()
-            .unwrap()
             .take()
             .ok_or_else(|| JsError::new("gateway already consumed"))?;
 
@@ -101,10 +75,20 @@ impl StroemGateway {
             .node
             .set(node.clone())
             .map_err(|_| JsError::new("node already set"))?;
-        *self.inner.quote_rx.lock().unwrap() = Some(quote_rx);
+        *self.inner.quote_rx.lock() = Some(quote_rx);
 
-        spawn_quote_drain(self.inner.clone());
-        spawn_swap_status_drain(self.inner.clone());
+        spawn_drain(
+            self.inner.quote_rx.lock().take(),
+            self.inner.callbacks.clone(),
+            |c| c.quote.clone(),
+            "CheckedQuote",
+        );
+        spawn_drain(
+            self.inner.swap_status_rx.lock().take(),
+            self.inner.callbacks.clone(),
+            |c| c.swap_status.clone(),
+            "SwapStatusUpdate",
+        );
         spawn_peer_count_poll(self.inner.clone(), node);
         Ok(())
     }

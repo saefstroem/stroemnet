@@ -3,19 +3,16 @@ use alloy_primitives::U256;
 use crate::error::AmountError;
 use crate::result::Result;
 
-/// Utility struct for amount calculations and conversions.
 pub struct Amounts;
 
 impl Amounts {
-    /// Stroemnets internal decimals that is used for all amounts and representations.
+    /// The number of decimal places to use for price calculations.
+    /// This is a canonical decimal precision for any kind of reasoning with amounts.
     pub const PRICE_DECIMALS: u8 = 8;
 
-    /// Computes amount out given a number of parameters.
-    /// This is used across all chains to compute the expected output amount for a swap,
-    /// given the input amount, source and destination prices and decimals, and the spread percentage.
-    ///
-    /// This was grouped to ensure that all chains and all callers compute the exact same amount in order
-    /// to avoid discrepancies that could lead to failed swaps or user confusion.
+    /// A canonical function for computing the output amount for a swap
+    /// given input amount, source and destination prices, and a spread percentage.
+    /// The spread percentage is a value between 0 and 100, representing the fee taken from the output amount.
     pub fn amount_out(
         amount_in: U256,
         source_usd_price: f64,
@@ -28,149 +25,93 @@ impl Amounts {
             "Calculating amount_out with amount_in: {amount_in}, source_usd_price: {source_usd_price}, source_decimals: {source_decimals}, destination_usd_price: {destination_usd_price}, destination_decimals: {destination_decimals}, spread_percent: {spread_percent}"
         );
 
-        // If the destination price is 0 there is no need to compute anything
-        if destination_usd_price <= 0.0 {
-            return Err(AmountError::InvalidPriceData(destination_usd_price));
-        }
-
-        // If the source price is negative, it's also invalid data
-        if source_usd_price < 0.0 {
+        // Validate that the source price is finite and non-negative,
+        if !source_usd_price.is_finite() || source_usd_price < 0.0 {
             return Err(AmountError::InvalidPriceData(source_usd_price));
         }
 
-        // We only validate valid spread percentages.
+        // Validate that the destination price is finite and positive,
+        if !destination_usd_price.is_finite() || destination_usd_price <= 0.0 {
+            return Err(AmountError::InvalidPriceData(destination_usd_price));
+        }
+
+        // Ensure that spread is within 0, 100% this is the spread set by the LP node
         if !(0.0..100.0).contains(&spread_percent) {
             return Err(AmountError::InvalidPriceData(spread_percent));
         }
 
-        // Compute the price-scaled amount in source decimals,
+        // Compute the price scale
         let price_scale = 10f64.powi(Self::PRICE_DECIMALS as i32);
 
-        // Convert both prices to the fixedpoint representation with
-        // our internal number of decimals.
+        // We increase the source and destination price by the price scale in accordance
+        // with the price decimals. Essentially 1e8
+        // We need ot scale these prices in order to turn them into U256 which allows for easy multiplication
+        // without too much loss at the precision level.
         let source_price_fixed = U256::from((source_usd_price * price_scale).round() as u128);
         let dest_price_fixed = U256::from((destination_usd_price * price_scale).round() as u128);
 
-        // It is in source decimals because we inherit from amount_in which is in source decimals
+        // The output calculation  works in the way that we multiply the source input (amount in)
+        // by the source price in order to compute the usd value of the input. Then we simply divide
+        // by the destination price in order to get the output amount.
         let output_in_source_decimals = amount_in
             .checked_mul(source_price_fixed)
             .ok_or(AmountError::ArithmeticOverflow(amount_in))?
             .checked_div(dest_price_fixed)
             .ok_or(AmountError::DivisionByZero(dest_price_fixed))?;
 
-        // Compute the spread basis points and compute the multiplier that
-        // we apply to the output amount. We use basis points here
-        // since we are dealing with non-float u256.
+        // Compute the bps instead of spread.
         let spread_bps = (spread_percent * 100.0) as u32;
+
+        // Compute the spread multiplier which will be how much we need to reduce
+        // the output by in order to account for the spread.
         let spread_multiplier = U256::from(10_000u32.saturating_sub(spread_bps));
         let spread_divisor = U256::from(10_000u32);
 
-        // Apply the spread to the output amount.
-        // Then divide by 100 bps to get the final amount after spread.
+        // Multiply the output (which is in source decimals) by the spread multiplier
+        // but then divide it by the full divisor effectively reducing it by spread_bps.
         let output_after_spread = output_in_source_decimals
             .checked_mul(spread_multiplier)
             .ok_or(AmountError::ArithmeticOverflow(output_in_source_decimals))?
             .checked_div(spread_divisor)
             .ok_or(AmountError::DivisionByZero(spread_divisor))?;
 
-        // Finally, rescale the output amount from source decimals to destination decimals.
+        // Now the output is fully ready, we just need to rescale it from the source decimals
+        // to the destination decimals
         Self::rescale(output_after_spread, source_decimals, destination_decimals)
     }
 
-    /// A universal rescaling function that can be used to convert amounts between different decimal representations.
+    /// Rescales any value either up or down depending on the size of from and to decimals
+    /// The final value is in to_decimals.
     pub fn rescale(amount: U256, from_decimals: u8, to_decimals: u8) -> Result<U256> {
-        // Compute the difference in decimals.
+        // Compute the diff
         let diff = to_decimals as i32 - from_decimals as i32;
 
-        // If the difference is larger than 0 we need to multiply by 10^(diff) to get to the new decimals.
+        // If the diff is greater than 0
+        // we need to multiply it by the diff to rescale it up to the larger
+        // decimals
         if diff > 0 {
             amount
                 .checked_mul(U256::from(10u64).pow(U256::from(diff as u64)))
                 .ok_or(AmountError::AmountOverflow(amount))
         } else if diff < 0 {
-            // If the difference is smaller than 0 we need to divide by 10^(-diff) to get to the new decimals.
+            // If its less we do the opposite, we divide by the 10^-diff in order to scale it down.
             amount
                 .checked_div(U256::from(10u64).pow(U256::from((-diff) as u64)))
                 .ok_or(AmountError::AmountUnderflow(amount))
         } else {
-            // If the difference is 0, we can return the same amount since it's already in the correct decimals.
             Ok(amount)
         }
-    }
-
-    /// Rescales the amount and formats it as a string with the correct number of decimals,
-    /// applying a ceiling-like behavior to ensure that we don't under-represent small amounts when displaying to users.
-    /// I.e. if we display only 8 decimals but the actual amount has 18 decimals, we want to ensure
-    /// we over-represent the amount rather than under-representing it, to avoid insufficient deposits or failed swaps
-    pub fn rescale_display_like_ceil(
-        amount: U256,
-        from_decimals: u8,
-        to_decimals: u8,
-    ) -> Result<String> {
-        let rescaled = Self::rescale_ceil(amount, from_decimals, to_decimals)?;
-        Self::format_fixed_point(rescaled, to_decimals)
-    }
-
-    /// Similar to rescale but applies a ceiling-like behavior when scaling down, to avoid under-representing small amounts.
-    fn rescale_ceil(amount: U256, from_decimals: u8, to_decimals: u8) -> Result<U256> {
-        // Compute the difference in decimals.
-        let diff = to_decimals as i32 - from_decimals as i32;
-        if diff >= 0 {
-            // If we are scaling up or keeping the same decimals,
-            // we can just rescale normally since there is no risk of under-representation.
-            return Self::rescale(amount, from_decimals, to_decimals);
-        }
-
-        // If we are scaling down, we need to apply the ceiling behavior.
-        let divisor = U256::from(10u64).pow(U256::from((-diff) as u64));
-
-        // Compute the quotient and remainder to determine if we need to apply the ceiling.
-        let q = amount
-            .checked_div(divisor)
-            .ok_or(AmountError::DivisionByZero(divisor))?;
-
-        // If there is a remainder, we need to add 1 to the quotient to apply the ceiling.
-        let r = amount % divisor;
-        if r > U256::ZERO {
-            // Bump up the quotient by 1 to apply the ceiling, but check for overflow first.
-            q.checked_add(U256::from(1u64))
-                .ok_or(AmountError::AmountOverflow(q))
-        } else {
-            // If there is no remainder, we can return the quotient as is.
-            Ok(q)
-        }
-    }
-
-    /// Formats a U256 amount as a fixed-point decimal string with the given number of decimals.
-    fn format_fixed_point(amount: U256, decimals: u8) -> Result<String> {
-        if decimals == 0 {
-            // If there are no decimals, we can just return the amount as a string.
-            return Ok(amount.to_string());
-        }
-
-        // Compute the divisor for the decimals to split the whole and fractional parts.
-        let divisor = U256::from(10u64).pow(U256::from(decimals as u64));
-
-        // Compute the whole amounts
-        let whole = amount / divisor;
-
-        // Compute fracntional amount.
-        let frac = amount % divisor;
-
-        // Format the fractional part as a string.
-        let frac_str = frac.to_string();
-
-        // Left-pad the fractional string with zeros to ensure it has the correct number of decimal places.
-        // and replace some of it with the frac_str.
-        let padded = format!("{frac_str:0>width$}", width = decimals as usize);
-
-        // Return the formatted string in the form "whole.fractional".
-        Ok(format!("{whole}.{padded}"))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing
+    )]
     use super::*;
 
     const KAS_DEC: u8 = 8;
@@ -222,38 +163,6 @@ mod tests {
     #[test]
     fn rescale_zero() {
         assert_eq!(Amounts::rescale(U256::ZERO, 0, 18).unwrap(), U256::ZERO);
-    }
-
-    #[test]
-    fn rescale_display_like_ceil_bumps_subunit_to_one() {
-        assert_eq!(
-            Amounts::rescale_display_like_ceil(U256::from(1u64), 18, 8).unwrap(),
-            "0.00000001",
-        );
-    }
-
-    #[test]
-    fn rescale_display_like_ceil_exact_value_no_bump() {
-        assert_eq!(
-            Amounts::rescale_display_like_ceil(U256::from(10_000_000_000u64), 18, 8).unwrap(),
-            "0.00000001",
-        );
-    }
-    #[test]
-    fn rescale_display_like_ceil_zero_target_decimals() {
-        assert_eq!(
-            Amounts::rescale_display_like_ceil(U256::from(1_500_000_000_000_000_000u128), 18, 0)
-                .unwrap(),
-            "2",
-        );
-    }
-
-    #[test]
-    fn rescale_display_like_ceil_zero_input() {
-        assert_eq!(
-            Amounts::rescale_display_like_ceil(U256::ZERO, 18, 8).unwrap(),
-            "0.00000000",
-        );
     }
 
     #[test]

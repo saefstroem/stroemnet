@@ -15,8 +15,8 @@ use tokio::time::sleep;
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone)]
-/// A group struct for the price storage and price feed which aggregates
-/// price data from multiple sources and stores it in the price storage for use by the handler.
+/// The oracle responsible for aggregating prices
+/// from online sources and storing them
 pub struct Oracle {
     price_storage: PriceStorage,
     feed: PriceFeed,
@@ -36,30 +36,24 @@ impl Oracle {
         })
     }
 
-    /// Runs the main loop of the oracle,
-    /// which periodically updates all prices by fetching from multiple sources and aggregating them.
     pub fn run_loop(self) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             loop {
                 if let Err(e) = self.update_all_prices().await {
-                    tracing::error!("Error updating prices: {}", e);
-
-                    self.price_storage.clear();
-                    tracing::error!("Cleared all prices from storage due to error");
+                    tracing::warn!(
+                        "price update failed; retaining last baseline (stale prices fail closed): {e}"
+                    );
                 }
 
-                sleep(Duration::from_secs(self.update_interval_secs)).await;
+                sleep(Duration::from_secs(self.update_interval_secs.max(1))).await;
             }
         })
     }
 
-    /// Updates all prices by fetching from multiple sources and aggregating them.
     async fn update_all_prices(&self) -> Result<()> {
         let channels = self.price_storage.channels();
-        // Fetches prices for all channels from all sources and aggregates them
         let prices = self.feed.aggregate(&channels).await?;
 
-        // For each channel and price, update the price storage and log the new price.
         for (channel, price) in prices {
             self.price_storage.set(channel, price);
         }
@@ -70,6 +64,7 @@ impl Oracle {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use stroemnet_protocol::ChannelId;
 
     use super::*;
@@ -85,8 +80,8 @@ mod tests {
     fn test_oracle_creation() {
         let channels = vec![ChannelId::KaspaTn10, ChannelId::EthereumSepolia];
         let price_storage = PriceStorage::new(channels);
-        assert_eq!(price_storage.get(&ChannelId::KaspaTn10), Some(0.0));
-        assert_eq!(price_storage.get(&ChannelId::EthereumSepolia), Some(0.0));
+        assert_eq!(price_storage.get(&ChannelId::KaspaTn10), None);
+        assert_eq!(price_storage.get(&ChannelId::EthereumSepolia), None);
     }
 
     #[test]

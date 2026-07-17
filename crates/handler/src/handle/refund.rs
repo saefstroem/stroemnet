@@ -3,7 +3,7 @@ use crate::result::Result;
 use stroemnet_protocol::v1::RefundV1;
 
 impl Handler {
-    /// Handle an external refund which is basically the fact that we mark it as refunded
+    /// Handle an external refund event by setting the swap id as refunded
     pub async fn handle_external_refund(&self, refund: RefundV1) -> Result<()> {
         tracing::info!("Handling refund: {:?}", refund);
         let mut tracker_write = self.swap_tracker.write().await;
@@ -15,6 +15,12 @@ impl Handler {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing
+    )]
     use crate::test_fixtures::{
         create_test_handler, mock_counter_commitment, mock_init_commitment,
     };

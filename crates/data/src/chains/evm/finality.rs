@@ -4,46 +4,48 @@ use alloy::rpc::types::{Filter, Log};
 use alloy::sol_types::SolEvent;
 
 use super::contracts::StroemHTLCV1;
+use crate::chains::net::retry_timed;
 
-/// Default interval and poll parameters for the EVM chain poller,
-/// can be overridden by config and are tested in the PollState tests
+/// The default polling interval milliseconds
 pub(crate) const DEFAULT_POLL_INTERVAL_MS: u64 = 10_000;
+
+// Maximum blocks per rpc call
 pub(crate) const DEFAULT_MAX_BLOCKS_PER_POLL: u64 = 1000;
 
 #[derive(Debug, Clone, Copy)]
-/// A container for tracking the next
-/// block to poll for events,
-/// and computing the next block range to poll based on the current chain head
+/// Tracks the last block that we have successfully polled, ensures
+/// that we never miss a block
 pub(super) struct PollState {
     pub cursor: u64,
 }
 
 impl PollState {
-    /// Computes the next block range to poll based on the current chain head,
-    /// the required number of confirmations, and the maximum blocks to poll at once.
-    /// Returns None if there are no new blocks to poll yet.
+    /// Compute the next range of blocks to poll from the rpc
     pub(super) fn next_range(
         &self,
-        current_block: u64,
-        confirmations: u64,
-        max_blocks_per_poll: u64,
+        current_block: u64,       // the current block number
+        confirmations: u64,       // number of confirmations that we need
+        max_blocks_per_poll: u64, // maximum blocks per fetch
     ) -> Option<(u64, u64)> {
-        // Exclusive upper bound: one past the deepest confirmed block.
+        // We want to fetch until the current latest block back - confirmations +1 since we do up until but not
+        // including
         let confirmed_end = current_block.checked_sub(confirmations)?.checked_add(1)?;
-        // The cursor is the next unread block, we start from here.
         let from = self.cursor;
+
+        // If from is from is greater then the confirmed end it means we havent confirmed enough blocks
         if from >= confirmed_end {
             return None;
         }
 
-        // Cap the range to max_blocks_per_poll, or 1 if max_blocks_per_poll is zero
+        // At least one block per poll
         let max = max_blocks_per_poll.max(1);
 
-        // Half-open end: at most max blocks ahead, never past the confirmed end.
+        // The end is the smallest of the end and from + the amount of blocks we poll
         let end = confirmed_end.min(from.saturating_add(max));
         Some((from, end))
     }
 
+    /// Advance the cursor to another block range end
     pub(super) fn advance(&mut self, end: u64) {
         debug_assert!(
             end >= self.cursor,
@@ -51,40 +53,35 @@ impl PollState {
             self.cursor,
             end
         );
-        // Update the cursor to the new block ensuring that
-        // caller doesnt try to move it backwards, which would risk missing events
         self.cursor = end;
     }
 
-    /// Polls the EVM chain for logs from the HTLC contract in the next block range,
-    /// returning the logs or an empty vector if there are no new blocks to poll or if
-    /// there was an error fetching the block number or logs (in which case the cursor is unchanged to allow retrying)
+    /// Poll once in accorance with the block range
     pub(super) async fn poll_once<P: Provider>(
         &mut self,
-        provider: &P,
-        htlc_address: Address,
-        minimum_block_confirmations: u64,
-        max_blocks_per_poll: u64,
+        provider: &P,                     // the provider
+        htlc_address: Address,            // the contract address
+        minimum_block_confirmations: u64, // minimum amount of blocks to wait for conf
+        max_blocks_per_poll: u64,         // maximum amount of blocks per poll
     ) -> Vec<Log> {
-        // Get the current block number
-        let current = match provider.get_block_number().await {
-            Ok(n) => n,
-            Err(e) => {
-                tracing::warn!("eth_blockNumber failed: {e} — cursor unchanged, will retry");
+        // Get the block number and retry a few times but its timeout based
+        let current = match retry_timed("eth_blockNumber", || provider.get_block_number()).await {
+            Some(n) => n,
+            None => {
+                tracing::warn!("eth_blockNumber failed — cursor unchanged, will retry");
                 return Vec::new();
             }
         };
 
-        // Compute the next block range to poll, if any
-        // If there are no new blocks to poll yet, return an empty vector
+        // Compute the next range to fetch from
+        // or return an empty vec if we are not ready to fetch more
         let Some((from, end)) =
             self.next_range(current, minimum_block_confirmations, max_blocks_per_poll)
         else {
             return Vec::new();
         };
 
-        // Create a filter which is by our address but also
-        // the signatures of the events that we are looking for.
+        // Create a simple evm filter
         let filter = Filter::new()
             .address(htlc_address)
             .events([
@@ -92,15 +89,15 @@ impl PollState {
                 StroemHTLCV1::Claim::SIGNATURE.as_bytes(),
                 StroemHTLCV1::Refund::SIGNATURE.as_bytes(),
             ])
-            .from_block(from)
-            .to_block(end - 1); // end is exclusive
+            .from_block(from) // the from block
+            .to_block(end - 1); // this is inclusive, but our range is up and to  (non-inclusive) so we do -1
 
-        // Retrieve logs from the provider in accordance with the filter
-        let logs = match provider.get_logs(&filter).await {
-            Ok(l) => l,
-            Err(e) => {
+        // Retrieve the logs in accordance with the created filter
+        let logs = match retry_timed("eth_getLogs", || provider.get_logs(&filter)).await {
+            Some(l) => l,
+            None => {
                 tracing::warn!(
-                    "eth_getLogs {from}..{end} failed: {e} — cursor unchanged, will retry"
+                    "eth_getLogs {from}..{end} timed out — cursor unchanged, will retry"
                 );
                 return Vec::new();
             }
@@ -111,7 +108,7 @@ impl PollState {
             logs.len()
         );
 
-        // Advance the cursor to the end of the range
+        // After succesfully fetching we should advance
         self.advance(end);
         logs
     }
@@ -119,6 +116,12 @@ impl PollState {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing
+    )]
     use super::*;
 
     fn state(cursor: u64) -> PollState {

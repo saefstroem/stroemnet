@@ -6,3 +6,4 @@ stroemnet.toml
 /target
 contracts/ethereum/deploy.sh
 todo.md
+/contracts/ethereum/broadcast
