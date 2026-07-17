@@ -10,7 +10,6 @@ members = [
   "crates/test-harness",
   "crates/wasm",
   "crates/data",
-  "crates/xtask"
 ]
 
 [workspace.package]
