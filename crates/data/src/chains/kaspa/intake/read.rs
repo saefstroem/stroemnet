@@ -73,7 +73,7 @@ impl Intake {
         let mut iterations: u32 = 0;
         loop {
             iterations += 1;
-            /// Retrieve the blocks and transactions
+            // Retrieve the blocks and transactions
             let resp = retry_timed("get_blocks", || {
                 client.get_blocks(Some(page_low), true, true)
             })
